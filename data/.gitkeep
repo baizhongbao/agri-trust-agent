@@ -1,0 +1,5 @@
+# 运行时数据目录（不入库）
+#   app.db      结构化数据（SQLite）
+#   chroma/     向量索引
+#   uploads/    上传的合同原件
+#   hf_cache/   本地模型缓存

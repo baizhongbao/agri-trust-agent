@@ -1,0 +1,19 @@
+# 构建上下文瘦身：这些内容一律不进镜像
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.env
+.env.*
+data/
+models/
+*.db
+*.sqlite3
+*.log
+logs/
+.git/
+.gitignore

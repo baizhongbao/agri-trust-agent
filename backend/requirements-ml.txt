@@ -1,0 +1,44 @@
+# ============================================================
+#  后端依赖 · RAG / 本地模型层
+#
+#  仅「标准校验」模块需要，体积较大（含 torch，约 2~3GB）。
+#  主力机 Linux + NVIDIA 显卡 → 本地跑 Embedding 与 Reranker，
+#  零 API 成本、无网络延迟、演示时不怕断网。
+#
+#  不需要本地模型时可整份跳过，把 INSTALL_ML 设为 false 即可。
+# ============================================================
+-r requirements.txt
+
+# ---- 本地 Embedding / Reranker ----
+#
+# ⚠️ RTX 50 系（Blackwell，算力 sm_120）必须使用 CUDA 12.8+ 的 torch 构建，
+#    否则会报 "no kernel image is available for execution on the device"，
+#    看起来像显卡故障，实际是 wheel 与架构不匹配。
+#
+#     硬件要求：NVIDIA 驱动 >= 570（RTX 50 系最低要求）
+#
+#     安装顺序很关键——必须先单独装 torch，再装其余依赖，
+#     否则 pip 可能从 PyPI 拉到不匹配的版本：
+#
+#         pip install torch --index-url https://download.pytorch.org/whl/cu128
+#         pip install -r requirements-ml.txt
+#
+#     安装后验证：
+#         python -c "import torch;print(torch.__version__, torch.version.cuda, torch.cuda.get_device_capability())"
+#         期望形如：2.x.x+cu128  12.8  (12, 0)
+#
+torch
+sentence-transformers
+transformers
+
+# ---- 向量库（三选一，默认 chroma）----
+# chroma：嵌入式，无独立服务，轻量起步首选
+chromadb
+# faiss-cpu：更轻快，适合纯 CPU 或已自行管理索引
+# faiss-cpu
+# pymilvus：仅在检索规模超出嵌入式方案时启用，需独立部署服务
+# pymilvus
+
+# ---- 数据处理 ----
+numpy
+pandas

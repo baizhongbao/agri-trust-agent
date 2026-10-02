@@ -1,0 +1,119 @@
+# ============================================================
+#  订单农业可信性 Agent - 本地开发编排
+#
+#  默认只启动后端 API：
+#      docker compose up -d --build
+#
+#  需要 PostgreSQL / Redis / MinIO 时：
+#      docker compose --profile infra up -d
+#
+#  Linux（主力开发机）与 Windows + WSL2 下用法完全一致，
+#  差异只体现在 GPU 直通（Windows 侧无法直接透传，见下方注释）。
+# ============================================================
+name: agri-trust-agent
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        # ⚠️ 主力机 Linux 仅 128GB 磁盘：含 torch 的镜像 + 构建缓存约需 20~30GB。
+        #    因此本地 Embedding / Reranker 建议在宿主机原生 venv 中运行，
+        #    容器只负责 API。确需在容器内跑模型时再改为 "true"。
+        INSTALL_ML: "false"
+    image: agri-trust-agent/api:dev
+    container_name: agri-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内的仓库根目录，供 app/core/config.py 解析相对路径
+      PROJECT_ROOT: /app
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # 开发期挂载源码，配合 --reload 热更新
+      - ./backend/app:/app/app
+      # 持久化：SQLite / 向量索引 / 上传的合同原件
+      - ./data:/app/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    # --------------------------------------------------------
+    # GPU 直通：让容器内的 Embedding / Reranker 用上显卡
+    #
+    # Linux 宿主机前置条件：
+    #     sudo apt install -y nvidia-container-toolkit
+    #     sudo nvidia-ctk runtime configure --runtime=docker
+    #     sudo systemctl restart docker
+    # 验证：docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+    #
+    # ⚠️ 若在 Windows + WSL2 上启动本编排，请保持下面注释状态。
+    # --------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ----------------------------------------------------------
+  # 可选基础设施：默认不启动，仅 --profile infra 时启用
+  # 当前阶段（P0 链路打通）项目并不需要它们，
+  # 保留配置是为了后续切换存储/向量库时不用重新设计。
+  # ----------------------------------------------------------
+  postgres:
+    profiles: ["infra"]
+    image: postgres:16-alpine
+    container_name: agri-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agri
+      POSTGRES_PASSWORD: agri
+      POSTGRES_DB: agri
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    profiles: ["infra"]
+    image: redis:7-alpine
+    container_name: agri-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  minio:
+    profiles: ["infra"]
+    image: minio/minio:latest
+    container_name: agri-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  # Milvus 需要 etcd + MinIO 三组件协同，单独维护一套编排更清晰。
+  # 仅当 chromadb 无法满足检索规模时再引入，推荐直接使用官方 compose：
+  #     https://github.com/milvus-io/milvus/releases  （standalone-embed 版）
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

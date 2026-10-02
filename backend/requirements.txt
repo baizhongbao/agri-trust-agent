@@ -1,0 +1,40 @@
+# ============================================================
+#  后端依赖 · 基础层（Web / PDF / 华为云 SDK）
+#
+#  为什么不锁版本：
+#      首次在主力机（Linux）安装成功后，执行
+#          pip freeze > requirements.lock.txt
+#      并把 lock 文件提交入库，由它负责可复现性。
+#      版本硬编码反而容易在跨机时踩到不存在的 wheel。
+# ============================================================
+
+# ---- Web 服务层 ----
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+
+# ---- 配置与网络 ----
+python-dotenv
+httpx
+requests
+tenacity
+orjson
+
+# ---- 合同解析：PDF 处理 ----
+pymupdf
+pdfplumber
+pypdf
+
+# ---- 华为云 SDK ----
+huaweicloudsdkcore
+huaweicloudsdkocr
+
+# ---- 结构化输出校验 ----
+jsonschema
+
+# ---- 开发与测试 ----
+pytest
+pytest-asyncio
+ruff

@@ -1,0 +1,44 @@
+# ============================================================
+#  行尾符与合并策略
+#  目的：让 Linux（主力开发机）/ Windows + WSL2 三端协作不产生
+#        无意义的 diff，并避免 Linux 上 shell 脚本出现 ^M 报错
+# ============================================================
+
+# 默认：入库统一 LF，检出时按平台自动处理
+* text=auto eol=lf
+
+# Windows 专属脚本保持 CRLF，否则 PowerShell 解析异常
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做行尾转换，避免文件损坏
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.svg  text eol=lf
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.whl  binary
+*.so   binary
+*.dll  binary
+*.db   binary
+*.sqlite3 binary
+*.bin  binary
+*.pt   binary
+*.safetensors binary
+
+# 锁文件：避免自动合并产生冲突
+package-lock.json   merge=binary
+pnpm-lock.yaml      merge=binary
+yarn.lock           merge=binary
+requirements.lock.txt merge=binary
+
+# 统计时忽略生成物
+# 注意：data/standards 与 data/samples 是手写知识库与验收基准，不属于生成物，故不在此列
+data/contracts/**   linguist-generated=true
+data/uploads/**     linguist-generated=true
+*.lock              linguist-generated=true

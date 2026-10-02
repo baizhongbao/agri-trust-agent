@@ -1,0 +1,68 @@
+# ============================================================
+#  不入库清单
+#  原则：凭证、环境产物、数据、模型一律不入库
+# ============================================================
+
+# ---- 凭证（最重要）----
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- Node / 前端 ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ---- 数据与模型 ----
+# 运行产物不入库：contracts（解析结果）/ uploads（合同原件，含用户隐私）
+data/*
+!data/.gitkeep
+# 但知识库必须入库 —— 标准库与必备条款清单是本项目的核心资产，
+# 不入库则换台机器就要重新整理（Linux 主力机需要它）
+!data/standards/
+# 验收基准：示例合同（由 scripts/make_sample_contract.py 确定性生成，约 8KB）
+!data/samples/
+
+models/
+*.db
+*.sqlite3
+*.pt
+*.safetensors
+*.onnx
+
+# ---- IDE / 编辑器 ----
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---- 操作系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 日志与临时文件 ----
+*.log
+logs/
+tmp/
+temp/
