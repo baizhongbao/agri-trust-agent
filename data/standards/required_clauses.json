@@ -1,6 +1,7 @@
 {
-  "version": "1.0",
-  "note": "订单农业合同必备条款清单。由 CUAD（Contract Understanding Atticus Dataset）的 41 类律师标注条款体系裁剪而来：保留通用条款、去掉美国商事特有条款（Change of Control / Anti-Assignment / Non-Compete / Exclusivity 等）、补充订单农业特有条款。本文件只用于「覆盖检测」（该有的条款有没有），不参与标准条款检索——因此不含 standards 键，标准库加载器会自动忽略它。",
+  "version": "2.0",
+  "note": "订单农业合同必备条款清单。v2.0 起以农业农村部《订单农业合同规范指引》（农办法〔2026〕1号）为骨架：该指引是专门针对订单农业合同签订发布的行政指导，领域匹配度远高于通用商事合同条款体系。CUAD（Contract Understanding Atticus Dataset）的 41 类标签体系降为参考——其中的 Change of Control / Anti-Assignment / Non-Compete / Exclusivity 等美国商事特有条款已裁掉。",
+  "source_note": "每项的 source 字段标注其依据（指引条文号或法律条文号），便于逐条溯源。",
   "risk_weights": {
     "required": { "high": 15, "medium": 8, "low": 4 },
     "recommended": { "high": 6, "medium": 4, "low": 2 },
@@ -8,13 +9,31 @@
   },
   "required_clauses": [
     {
+      "key": "party_info",
+      "name": "合同主体基本信息",
+      "level": "required",
+      "risk": "high",
+      "keywords": ["统一社会信用代码", "信用代码", "法定代表人", "负责人", "身份证号", "住所", "联系电话", "甲方", "乙方"],
+      "advice": "应写明当事人名称、住所、统一社会信用代码、法定代表人或负责人姓名及联系电话；自然人应写明姓名、身份证号和住址",
+      "source": "《订单农业合同规范指引》第一条"
+    },
+    {
+      "key": "buyer_qualification",
+      "name": "收购主体经营资质",
+      "level": "required",
+      "risk": "high",
+      "keywords": ["营业执照", "经营范围", "经营资质", "许可证", "备案", "资质证明", "证照"],
+      "advice": "收购主体经营范围应包含农产品销售或加工；由其提供种子、农药、肥料等投入品的，还应具备相应许可证或已备案，建议将资质证照复印件作为合同附件",
+      "source": "《订单农业合同规范指引》第二条"
+    },
+    {
       "key": "subject_quantity",
       "name": "标的与数量",
       "level": "required",
       "risk": "high",
-      "keywords": ["标的", "品种", "收购量", "订购量", "收购数量", "数量", "种植面积"],
-      "advice": "应明确农产品的品种、规格、等级与数量，并约定交付批次安排",
-      "source": "CUAD: Document Name / Parties；订单农业实践"
+      "keywords": ["标的", "品种", "规格", "等级", "收购量", "订购量", "收购数量", "数量", "种植面积"],
+      "advice": "应明确农产品品种、规格、等级与基准数量，并约定允许的浮动幅度",
+      "source": "《订单农业合同规范指引》第八条；示范文本 示范3.1"
     },
     {
       "key": "quality_standard",
@@ -22,26 +41,35 @@
       "level": "required",
       "risk": "high",
       "keywords": ["质量标准", "质量要求", "国家标准", "GB/T", "GB ", "等级", "水分", "杂质", "整精米率"],
-      "advice": "应约定所执行的国家标准或行业标准编号，并明确关键指标阈值",
-      "source": "CUAD: Quality Standards；GB/T 1354-2018"
+      "advice": "应约定执行的国家标准、行业标准或地方标准编号；无对应标准时须以可量化方式清晰表述，避免使用『优质』『名品』等模糊表述",
+      "source": "《订单农业合同规范指引》第九条"
     },
     {
-      "key": "price_settlement",
-      "name": "价格与结算",
+      "key": "acceptance",
+      "name": "交付与验收程序",
       "level": "required",
       "risk": "high",
-      "keywords": ["金额", "价款", "单价", "结算", "付款", "支付", "货款"],
-      "advice": "应明确计价方式、结算周期与支付方式",
-      "source": "CUAD: Payment Terms"
+      "keywords": ["验收", "交货", "交付", "供货", "运送", "提货", "清点", "资料核对"],
+      "advice": "应约定交付时间、地点、方式，以及验收时间、验收内容（数量清点、质量检验、资料核对）与验收程序",
+      "source": "《订单农业合同规范指引》第八条、第九条"
     },
     {
-      "key": "delivery_acceptance",
-      "name": "交付与验收",
+      "key": "quality_objection",
+      "name": "质量异议期与复检",
+      "level": "required",
+      "risk": "medium",
+      "keywords": ["异议", "复检", "复验", "质量争议", "检验期限", "共同取样", "封存", "送检"],
+      "advice": "应约定质量异议提出的期限、复检机构与费用承担，并鼓励约定共同取样封存，否则验收争议无从解决",
+      "source": "《订单农业合同规范指引》第九条（农产品质量争议高发）"
+    },
+    {
+      "key": "price_payment",
+      "name": "价格与付款期限",
       "level": "required",
       "risk": "high",
-      "keywords": ["交货", "交付", "供货", "验收", "运送", "提货", "签收"],
-      "advice": "应约定交付时间、地点、运输责任划分与验收方式",
-      "source": "CUAD: Delivery / Acceptance"
+      "keywords": ["金额", "价款", "单价", "收购价", "结算", "付款", "支付", "货款"],
+      "advice": "应明确收购价格与付款期限，并结合品种、品质等级、市场供需合理确定",
+      "source": "《订单农业合同规范指引》第十条"
     },
     {
       "key": "breach_liability",
@@ -49,8 +77,8 @@
       "level": "required",
       "risk": "high",
       "keywords": ["违约", "赔偿", "损失", "拒收"],
-      "advice": "应约定违约情形、违约金计算方式与赔偿范围",
-      "source": "CUAD: Liquidated Damages / Cap on Liability"
+      "advice": "违约责任应明确具体且双向对等，涵盖未按约定收购、拖延支付货款、交付农产品不符合约定、投入品不符合约定等情形",
+      "source": "《订单农业合同规范指引》第十一条、第十二条"
     },
     {
       "key": "force_majeure",
@@ -58,26 +86,17 @@
       "level": "required",
       "risk": "high",
       "keywords": ["不可抗力", "自然灾害", "台风", "洪水", "干旱", "病虫害", "疫情", "地震", "冰雹", "暴雨"],
-      "advice": "订单农业受天气影响极大，必须约定自然灾害等不可抗力情形下的免责与损失分担",
-      "source": "CUAD: Force Majeure（在订单农业中权重显著高于一般商事合同）"
-    },
-    {
-      "key": "quality_objection",
-      "name": "质量异议期与复检",
-      "level": "required",
-      "risk": "medium",
-      "keywords": ["异议", "复检", "复验", "质量争议", "检验期限", "检测机构"],
-      "advice": "应约定质量异议提出的期限、复检机构与费用承担，否则验收争议无从解决",
-      "source": "订单农业实践（农产品质量争议高发）"
+      "advice": "订单农业受天气影响极大，应约定自然灾害等不可抗力情形下的免责范围与通知义务；因不可抗力不能履行的，双方均不承担违约责任",
+      "source": "《订单农业合同规范指引》第十二条；《民法典》第五百九十条"
     },
     {
       "key": "dispute_resolution",
       "name": "争议解决",
       "level": "required",
       "risk": "medium",
-      "keywords": ["争议", "协商", "仲裁", "诉讼", "法院", "管辖"],
-      "advice": "应约定协商、仲裁或诉讼的争议解决路径与管辖机构",
-      "source": "CUAD: Governing Law / Jurisdiction"
+      "keywords": ["争议", "协商", "调解", "仲裁", "诉讼", "法院", "管辖"],
+      "advice": "应采用可执行的递进方式约定：协商 → 调解或向生产主体所在地法院起诉 → 可另约定仲裁优先条款",
+      "source": "《订单农业合同规范指引》第十四条"
     },
     {
       "key": "effectiveness",
@@ -86,7 +105,7 @@
       "risk": "medium",
       "keywords": ["生效", "有效期", "本合同自", "签订日期"],
       "advice": "应明确生效条件与合同有效期",
-      "source": "CUAD: Agreement Date / Effective Date / Expiration Date"
+      "source": "合同实践通则"
     }
   ],
   "recommended_clauses": [
@@ -95,9 +114,9 @@
       "name": "价格调整机制或保底价",
       "level": "recommended",
       "risk": "high",
-      "keywords": ["保底价", "保护价", "价格调整", "随行就市", "浮动价", "市场价"],
-      "advice": "长约订单建议约定保底价或随行就市的调价机制——价格波动是订单农业毁约的首要原因",
-      "source": "订单农业实践"
+      "keywords": ["保底价", "保护价", "最低收购价", "价格调整", "随行就市", "浮动价", "市场价", "利润分成"],
+      "advice": "建议采用『保底价＋市场浮动价格』或『最低收购价＋产品销售利润分成』等机制——价格波动是订单农业毁约的首要原因",
+      "source": "《订单农业合同规范指引》第十条"
     },
     {
       "key": "deposit",
@@ -105,17 +124,44 @@
       "level": "recommended",
       "risk": "medium",
       "keywords": ["定金", "订金", "预付款", "预付", "首付款"],
-      "advice": "约定定金或预付款比例，可显著降低一方事后毁约的风险",
-      "source": "订单农业实践"
+      "advice": "约定定金或预付款可显著降低事后毁约风险；注意定金数额不得超过主合同标的额的 20%，超过部分不产生定金效力",
+      "source": "《民法典》第五百八十六条；订单农业实践"
     },
     {
       "key": "measurement",
       "name": "交付计量方式",
       "level": "recommended",
       "risk": "medium",
-      "keywords": ["过磅", "计量", "称重", "折算", "以质论价"],
-      "advice": "应约定计量方式（过磅 / 取样折算）与计量地点，这是交割争议的高发点",
+      "keywords": ["过磅", "计量", "称重", "折算", "以质论价", "取样", "水分测定"],
+      "advice": "应约定计量方式（过磅 / 取样折算）、计量地点与水分折算规则，这是交割争议的高发点",
       "source": "订单农业实践"
+    },
+    {
+      "key": "technical_guidance",
+      "name": "技术指导服务",
+      "level": "recommended",
+      "risk": "medium",
+      "keywords": ["技术指导", "技术服务", "技术培训", "指导服务", "技术规程"],
+      "advice": "承诺提供技术指导的，应明确指导内容、方式、频次及相关人员资质；建议明确种植养殖技术规程",
+      "source": "《订单农业合同规范指引》第六条、第七条"
+    },
+    {
+      "key": "input_supply",
+      "name": "农业投入品约定",
+      "level": "recommended",
+      "risk": "medium",
+      "keywords": ["投入品", "种子", "种苗", "农药", "化肥", "肥料", "兽药", "饲料", "搭售", "合格证明"],
+      "advice": "约定投入品的，应明确类型、名称、质量、数量、交付时间方式、保质期与贮存条件；不得强制搭售，且须提供合格证明与使用说明",
+      "source": "《订单农业合同规范指引》第三条、第四条、第五条"
+    },
+    {
+      "key": "marketing_commitment",
+      "name": "宣传承诺写入合同",
+      "level": "recommended",
+      "risk": "low",
+      "keywords": ["宣传", "广告", "承诺", "保底收购", "灾害补偿"],
+      "advice": "生产主体可要求将收购主体在宣传中承诺的保底收购价格、技术指导服务、灾害补偿等实质性内容写入合同",
+      "source": "《订单农业合同规范指引》第十三条"
     },
     {
       "key": "amendment",
@@ -124,16 +170,7 @@
       "risk": "low",
       "keywords": ["变更", "修改", "补充协议", "解除", "终止"],
       "advice": "约定变更与解除的条件和程序，避免单方毁约无法追责",
-      "source": "CUAD: Termination / Amendment"
-    },
-    {
-      "key": "notice",
-      "name": "通知与送达",
-      "level": "recommended",
-      "risk": "low",
-      "keywords": ["通知", "送达", "书面形式"],
-      "advice": "约定通知方式与送达地址，便于主张权利时有据可依",
-      "source": "CUAD: Notice"
+      "source": "《民法典》第五百六十三条；CUAD: Termination / Amendment"
     }
   ]
 }

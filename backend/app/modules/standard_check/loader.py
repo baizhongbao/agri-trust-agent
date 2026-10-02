@@ -60,6 +60,18 @@ def load_items() -> list[dict[str, Any]]:
                         # 结构化限值：供「合同值 vs 标准阈值」的数值比对使用。
                         # 定性要求的条款不带 limits，比对时自然跳过。
                         "limits": clause.get("limits") or [],
+                        # ---- 时效与效力元数据：决定判定的性质与措辞 ----
+                        # standard_type: national_standard / food_safety_standard
+                        #                / regulation / law / guideline / model_contract
+                        # rule_strength: mandatory（不满足即违规）/ recommended（低于推荐标准）
+                        #                / advisory（偏离建议）
+                        "standard_type": standard.get("standard_type", ""),
+                        "rule_strength": standard.get("rule_strength", ""),
+                        "standard_status": standard.get("status", ""),
+                        "effective_date": standard.get("effective_date"),
+                        "supersedes": standard.get("supersedes") or [],
+                        "standard_source": standard.get("source", ""),
+                        "data_note": standard.get("data_note", ""),
                         "source_file": path.name,
                     }
                 )
@@ -79,8 +91,14 @@ def summarize_library() -> list[dict[str, Any]]:
                 "standard_code": item["standard_code"],
                 "standard_title": item["standard_title"],
                 "category": item["category"],
+                "standard_type": item["standard_type"],
+                "rule_strength": item["rule_strength"],
+                "status": item["standard_status"],
+                "effective_date": item["effective_date"],
                 "clause_count": 0,
+                "limit_count": 0,
             },
         )
         entry["clause_count"] += 1
+        entry["limit_count"] += len(item["limits"])
     return list(grouped.values())

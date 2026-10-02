@@ -9,12 +9,13 @@ from app.modules.standard_check import checklist
 
 # 一条把全部必备条款都覆盖到的"理想合同"文本
 FULL_TEXT = (
-    "本合同标的为优质水稻，数量180吨，种植面积320亩；"
+    "甲方（收购方）营业执照经营范围包含农产品收购，统一社会信用代码91341182612345678X；"
+    "乙方按甲方要求种植，标的为优质水稻，数量180吨，种植面积320亩；"
     "质量标准执行GB/T 1354-2018，水分含量不高于14.5%；"
     "合同金额486,000元，甲方验收后15个工作日内支付货款；"
     "任何一方违约应向对方赔偿损失并承担违约金；"
     "因台风、洪水等不可抗力或自然灾害导致无法履行的，双方互不承担责任；"
-    "对质量有异议的，应在7日内提出并申请复检；"
+    "对质量有异议的，应在7日内提出并申请共同取样复检；"
     "争议协商不成提交法院诉讼解决；"
     "本合同自双方签字盖章之日起生效。"
 )
@@ -35,8 +36,8 @@ def test_checklist_loads_from_data_file() -> None:
     required = [rule for rule in loaded.rules if rule.level == "required"]
     recommended = [rule for rule in loaded.rules if rule.level == "recommended"]
 
-    assert len(required) == 9
-    assert len(recommended) == 5
+    assert len(required) == 11
+    assert len(recommended) == 7
 
     keys = {rule.key for rule in loaded.rules}
     assert {"force_majeure", "quality_objection", "price_adjustment"} <= keys

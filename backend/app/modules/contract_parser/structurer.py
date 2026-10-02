@@ -211,6 +211,11 @@ def split_clauses(text: str) -> list[Clause]:
 
     优先按"第X条"切分；切不出来时退化为按空行分段，
     保证下游始终有可检索的片段。
+
+    第一个"第X条"**之前**的内容必须保留为 index=0 的「合同首部」。
+    当事人名称、统一社会信用代码、合同编号都在这段里，
+    而《订单农业合同规范指引》第一条要求的正是这些信息。
+    丢掉它，「主体信息缺失」会被永远误报。
     """
     heads = list(_CLAUSE_HEAD_RE.finditer(text))
 
@@ -222,6 +227,11 @@ def split_clauses(text: str) -> list[Clause]:
         ]
 
     clauses: list[Clause] = []
+
+    preamble = text[: heads[0].start()].strip()
+    if preamble:
+        clauses.append(Clause(index=0, title="合同首部", content=preamble[:3000]))
+
     for i, head in enumerate(heads):
         end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
         block = text[head.start() : end].strip()

@@ -1,18 +1,21 @@
-"""合同约定值与标准限值的数值比对。
+"""合同约定值与依据限值的数值比对。
 
 为什么这是「校验」的最后一块：
     标准条款匹配只能告诉你"这条合同条款像 GB/T 1354 第 5.2 条"（相似度 0.99），
     却回答不了"合同写的 14.5% 到底合不合规"。
-    要给出合规结论，必须把合同值与标准限值放进同一个坐标系里比大小。
-    做完这一步，「标准校验」才真正从"检索"变成"校验"。
+    要给出合规结论，必须把合同值与依据限值放进同一个坐标系里比大小。
 
 比对的两侧：
     合同侧：StructuredContract.facts —— 已由 facts.py 抽成数值 + 比较符
-    标准侧：标准库 clause.limits —— 人工整理的限值，带适用范围
+    依据侧：标准库 clause.limits —— 人工整理的限值，带适用范围与规则强度
 
-只对「双方都有的指标」下结论。
-    合同没约定的指标不在这里报——那属于"缺失"，由 checklist 负责。
-    一件事只有一个责任人，报告才不会自相矛盾。
+三个必须守住的边界：
+    1. 只对「双方都有的指标」下结论。合同没约定的指标不在此处报——
+       那属于"缺失"，由 checklist 负责。一件事只有一个责任人。
+    2. 判不了就返回 review，不硬给结论（单位不一致 / 方向冲突 / 区间对单边）。
+    3. **规则强度决定判定性质**：强制性依据（食品安全标准、法律）不满足才算"违规"；
+       推荐性标准（GB/T）只有被合同约定采用才成为义务，只能称"低于推荐标准"；
+       指导性文件（示范文本、行政指导）不具约束力，只能称"偏离建议"。
 """
 
 from __future__ import annotations
@@ -26,20 +29,40 @@ from app.modules.standard_check import loader
 
 logger = logging.getLogger(__name__)
 
-# 比例类指标的合同侧名称：由 facts.penalty.rate 换算而来
+# 合同侧参与比对的"比例类"指标：由 facts 换算而来
 PENALTY_METRIC = "违约金比例"
-
-_DISCLAIMER = (
-    "比对基于标准库中已结构化的限值。同一指标在不同品类下限值不同"
-    "（如籼稻谷与粳稻谷的水分要求），请结合 applies_to 与标准原文判断适用性。"
-)
+DEPOSIT_METRIC = "定金比例"
 
 _OP_ALIASES = {"≤": "<=", "≥": ">=", "＜": "<", "＞": ">"}
+
+# 规则强度 → 业务含义与严重程度
+_STRENGTH_LABEL = {
+    "mandatory": "强制性依据",
+    "recommended": "推荐性标准",
+    "advisory": "指导性文件",
+}
+_STRENGTH_SEVERITY = {
+    "mandatory": "high",
+    "recommended": "medium",
+    "advisory": "low",
+}
+# 违反时的判定措辞：强制性才算"违规"，其余只是"偏离"
+_STRENGTH_VERDICT = {
+    "mandatory": "违规",
+    "recommended": "低于推荐标准",
+    "advisory": "偏离建议",
+}
+
+_DISCLAIMER = (
+    "比对基于依据库中已结构化的限值。同一指标在不同品类下限值不同"
+    "（如籼稻谷与粳稻谷的水分要求），请结合 applies_to 与原文判断适用性。"
+    "推荐性标准与指导性文件不具强制约束力，相关提示仅供完善合同参考。"
+)
 
 
 @dataclass(frozen=True)
 class Limit:
-    """标准侧的一条限值。"""
+    """依据侧的一条限值。"""
 
     metric: str
     op: str  # <= | >= | range
@@ -51,18 +74,21 @@ class Limit:
 
 @dataclass(frozen=True)
 class LimitSource:
-    """限值及其出处——结论必须能指回具体标准条款。"""
+    """限值及其出处——结论必须能指回具体依据条款。"""
 
     standard_code: str
     standard_title: str
     clause_no: str
     clause_title: str
     limit: Limit
+    rule_strength: str = ""
+    standard_type: str = ""
+    effective_date: str | None = None
 
 
 @lru_cache(maxsize=1)
 def load_limits() -> tuple[LimitSource, ...]:
-    """从标准库摊平出全部限值。"""
+    """从依据库摊平出全部限值。"""
     sources: list[LimitSource] = []
 
     for item in loader.load_items():
@@ -77,7 +103,7 @@ def load_limits() -> tuple[LimitSource, ...]:
                     applies_to=str(raw.get("applies_to", "") or ""),
                 )
             except (KeyError, TypeError, ValueError) as exc:
-                logger.warning("标准限值定义非法，已跳过：%s（%s）", exc, raw)
+                logger.warning("依据限值定义非法，已跳过：%s（%s）", exc, raw)
                 continue
 
             if not limit.metric or limit.op not in {"<=", ">=", "range"}:
@@ -90,10 +116,13 @@ def load_limits() -> tuple[LimitSource, ...]:
                     clause_no=str(item.get("clause_no", "")),
                     clause_title=str(item.get("clause_title", "")),
                     limit=limit,
+                    rule_strength=str(item.get("rule_strength", "") or ""),
+                    standard_type=str(item.get("standard_type", "") or ""),
+                    effective_date=item.get("effective_date"),
                 )
             )
 
-    logger.info("标准限值加载完成：%d 条", len(sources))
+    logger.info("依据限值加载完成：%d 条", len(sources))
     return tuple(sources)
 
 
@@ -122,10 +151,14 @@ def contract_values(contract: Any) -> dict[str, tuple[str, float, str]]:
             metric.unit or "",
         )
 
+    # facts 里存小数（0.10），依据里写百分数（20%），此处统一换算成百分数
     penalty = getattr(facts, "penalty", None)
     if penalty is not None and penalty.rate is not None:
-        # facts 里存的是小数（0.10），标准里写的是百分数（30%）
         values[PENALTY_METRIC] = ("<=", round(penalty.rate * 100, 4), "%")
+
+    deposit = getattr(facts, "deposit", None)
+    if deposit is not None and deposit.rate is not None:
+        values[DEPOSIT_METRIC] = ("<=", round(deposit.rate * 100, 4), "%")
 
     return values
 
@@ -152,46 +185,56 @@ def _fmt(value: float, unit: str) -> str:
     return f"{number}{unit}" if unit else number
 
 
+def _verdict(strength: str) -> str:
+    return _STRENGTH_VERDICT.get(strength, "偏离依据")
+
+
+def _direction_phrase(op: str) -> str:
+    return "上限" if op == "<=" else "下限"
+
+
 def compare(
     contract_op: str,
     contract_value: float,
     contract_unit: str,
     limit: Limit,
+    strength: str = "mandatory",
 ) -> tuple[str, str]:
     """比对单个指标，返回 (status, reason)。
 
     status: compliant | violation | review
-        review 用于"系统无法判断"的情形（单位不一致、约束方向冲突），
-        这类必须显式暴露出来，而不是硬给一个合规结论。
+        violation 的**性质**由 strength 决定：
+        强制性依据违反 → 违规；推荐性标准 → 低于推荐标准；指导性文件 → 偏离建议。
+        review 用于"系统无法判断"的情形，必须显式暴露，而不是硬给结论。
     """
     if limit.unit and contract_unit and limit.unit != contract_unit:
-        return "review", f"单位不一致（合同 {contract_unit} / 标准 {limit.unit}），需人工核对"
+        return "review", f"单位不一致（合同 {contract_unit} / 依据 {limit.unit}），需人工核对"
 
     if limit.op == "range":
         if limit.upper is None:
-            return "review", "标准限值区间不完整，需人工核对"
+            return "review", "依据限值区间不完整，需人工核对"
         if contract_op in {"<=", ">="}:
             return (
                 "review",
                 f"合同为单边约定（{_fmt(contract_value, contract_unit)} 以下/以上），"
-                f"标准为区间要求 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)}，需人工核对",
+                f"依据为区间要求 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)}，需人工核对",
             )
         if limit.value <= contract_value <= limit.upper:
             return (
                 "compliant",
                 f"合同值 {_fmt(contract_value, contract_unit)} "
-                f"落在标准区间 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)} 内",
+                f"落在依据区间 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)} 内",
             )
         return (
             "violation",
             f"合同值 {_fmt(contract_value, contract_unit)} "
-            f"超出标准区间 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)}",
+            f"超出依据区间 {_fmt(limit.value, limit.unit)}~{_fmt(limit.upper, limit.unit)}",
         )
 
     if contract_op != limit.op:
         return (
             "review",
-            f"约束方向不同（合同 {contract_op} / 标准 {limit.op}），需人工核对",
+            f"约束方向不同（合同 {contract_op} / 依据 {limit.op}），需人工核对",
         )
 
     if limit.op == "<=":
@@ -199,12 +242,12 @@ def compare(
             return (
                 "compliant",
                 f"合同上限 {_fmt(contract_value, contract_unit)} "
-                f"未超出标准上限 {_fmt(limit.value, limit.unit)}",
+                f"未超出依据上限 {_fmt(limit.value, limit.unit)}",
             )
         return (
             "violation",
-            f"合同上限 {_fmt(contract_value, contract_unit)} "
-            f"宽于标准上限 {_fmt(limit.value, limit.unit)}",
+            f"{_verdict(strength)}：合同上限 {_fmt(contract_value, contract_unit)} "
+            f"宽于{_STRENGTH_LABEL.get(strength, '依据')}上限 {_fmt(limit.value, limit.unit)}",
         )
 
     # >=
@@ -212,28 +255,70 @@ def compare(
         return (
             "compliant",
             f"合同下限 {_fmt(contract_value, contract_unit)} "
-            f"不低于标准下限 {_fmt(limit.value, limit.unit)}",
+            f"不低于依据下限 {_fmt(limit.value, limit.unit)}",
         )
     return (
         "violation",
-        f"合同下限 {_fmt(contract_value, contract_unit)} "
-        f"低于标准下限 {_fmt(limit.value, limit.unit)}",
+        f"{_verdict(strength)}：合同下限 {_fmt(contract_value, contract_unit)} "
+        f"低于{_STRENGTH_LABEL.get(strength, '依据')}下限 {_fmt(limit.value, limit.unit)}",
     )
 
 
+def _timeliness(contract: Any) -> list[dict[str, Any]]:
+    """检查合同签订日期与依据生效日期的关系。
+
+    标准会换版。一份 2025 年签订的合同，不应该用 2026 年才生效的版本去评判，
+    至少要把这个时间差提示出来——这正是「版本化依据库」的价值所在。
+
+    这里基于**全部标准**而非仅含限值的标准，因为像《订单农业合同规范指引》
+    这类没有量化限值但有时效性的依据，同样需要提示。
+    """
+    facts = getattr(contract, "facts", None)
+    sign_date = getattr(facts, "sign_date", None) if facts is not None else None
+    sign_iso = getattr(sign_date, "start", None) if sign_date is not None else None
+    if not sign_iso:
+        return []
+
+    notices: list[dict[str, Any]] = []
+
+    for entry in loader.summarize_library():
+        code = str(entry.get("standard_code", ""))
+        effective = entry.get("effective_date")
+        if not code or not effective or sign_iso >= str(effective):
+            continue
+        notices.append(
+            {
+                "standard_code": code,
+                "standard_title": entry.get("standard_title", ""),
+                "effective_date": effective,
+                "contract_sign_date": sign_iso,
+                "message": (
+                    f"合同签订日（{sign_iso}）早于 {code} 的生效日（{effective}），"
+                    "本次比对依据为现行版本，订立时适用的版本可能不同，建议核对历史版本"
+                ),
+            }
+        )
+
+    return notices
+
+
 def check_compliance(contract: Any) -> dict[str, Any]:
-    """逐项比对合同约定值与标准限值。"""
+    """逐项比对合同约定值与依据限值。"""
     sources = load_limits()
     values = contract_values(contract)
+    timeliness = _timeliness(contract)
 
     if not values:
         return {
             "total": 0,
             "compliant_count": 0,
             "violation_count": 0,
+            "mandatory_violation_count": 0,
             "review_count": 0,
             "violations": [],
+            "reviews": [],
             "items": [],
+            "timeliness": timeliness,
             "summary": "合同中未抽到可量化的约定值，无法比对",
             "disclaimer": _DISCLAIMER,
         }
@@ -247,7 +332,7 @@ def check_compliance(contract: Any) -> dict[str, Any]:
         if matched is None:
             continue  # 合同没有约定这个指标，缺失由 checklist 报告
 
-        # 同一标准条款下数值相同的限值合并（如籼米与晚籼米同为 14.5%）
+        # 同一依据条款下数值相同的限值合并（如籼米与晚籼米同为 14.5%）
         key = (
             source.standard_code,
             source.clause_no,
@@ -257,12 +342,15 @@ def check_compliance(contract: Any) -> dict[str, Any]:
             source.limit.upper,
         )
         if key in grouped:
-            if source.limit.applies_to and source.limit.applies_to not in grouped[key]["applies_to"]:
-                grouped[key]["applies_to"].append(source.limit.applies_to)
+            existing = grouped[key]
+            if source.limit.applies_to and source.limit.applies_to not in existing["applies_to"]:
+                existing["applies_to"].append(source.limit.applies_to)
             continue
 
         contract_op, contract_value, contract_unit = values[matched]
-        status, reason = compare(contract_op, contract_value, contract_unit, source.limit)
+        status, reason = compare(
+            contract_op, contract_value, contract_unit, source.limit, source.rule_strength
+        )
 
         grouped[key] = {
             "metric": source.limit.metric,
@@ -279,16 +367,31 @@ def check_compliance(contract: Any) -> dict[str, Any]:
             "clause_no": source.clause_no,
             "clause_title": source.clause_title,
             "applies_to": [source.limit.applies_to] if source.limit.applies_to else [],
+            "rule_strength": source.rule_strength,
+            "basis": _STRENGTH_LABEL.get(source.rule_strength, "依据"),
+            "basis_type": source.standard_type,
+            "severity": (
+                _STRENGTH_SEVERITY.get(source.rule_strength, "medium")
+                if status == "violation"
+                else None
+            ),
             "status": status,
             "reason": reason,
         }
 
     items = list(grouped.values())
-    # 违规排最前，其次待人工核对，合规最后——先看要紧的
+    # 严重程度优先：强制性问题 > 其他偏离 > 待人工核对 > 合规
     order = {"violation": 0, "review": 1, "compliant": 2}
-    items.sort(key=lambda item: order.get(item["status"], 3))
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    items.sort(
+        key=lambda item: (
+            order.get(item["status"], 3),
+            severity_order.get(item["severity"] or "low", 3),
+        )
+    )
 
     violations = [item for item in items if item["status"] == "violation"]
+    mandatory_violations = [item for item in violations if item["severity"] == "high"]
     reviews = [item for item in items if item["status"] == "review"]
     compliant = [item for item in items if item["status"] == "compliant"]
 
@@ -296,13 +399,17 @@ def check_compliance(contract: Any) -> dict[str, Any]:
         "total": len(items),
         "compliant_count": len(compliant),
         "violation_count": len(violations),
+        "mandatory_violation_count": len(mandatory_violations),
         "review_count": len(reviews),
         "violations": violations,
+        "mandatory_violations": mandatory_violations,
         "reviews": reviews,
         "items": items,
+        "timeliness": timeliness,
         "summary": (
-            f"可比对指标 {len(items)} 项：合规 {len(compliant)} 项、"
-            f"超出标准 {len(violations)} 项、待人工核对 {len(reviews)} 项"
+            f"可比对指标 {len(items)} 项：一致 {len(compliant)} 项、"
+            f"偏离依据 {len(violations)} 项（其中违反强制性依据 {len(mandatory_violations)} 项）、"
+            f"待人工核对 {len(reviews)} 项"
         ),
         "disclaimer": _DISCLAIMER,
     }

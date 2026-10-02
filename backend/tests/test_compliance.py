@@ -150,3 +150,70 @@ def test_penalty_rate_converted_to_percentage() -> None:
     item = _find(compliance.check_compliance(contract), "示范3.5")
     assert item["contract_value"] == pytest.approx(10.0)
     assert item["status"] == "compliant"
+
+
+# ============================================================
+#  规则强度分级（v2.0 新增）
+# ============================================================
+
+
+def test_rule_strength_governs_verdict_wording() -> None:
+    """强制性依据不满足才算「违规」；推荐性、指导性只能称「偏离」。"""
+    water = compliance.Limit(metric="水分", op="<=", value=14.5, unit="%")
+    penalty = compliance.Limit(metric="违约金比例", op="<=", value=30.0, unit="%")
+
+    _, mandatory_reason = compliance.compare("<=", 20.0, "%", water, "mandatory")
+    _, recommended_reason = compliance.compare("<=", 20.0, "%", water, "recommended")
+    _, advisory_reason = compliance.compare("<=", 40.0, "%", penalty, "advisory")
+
+    assert "违规" in mandatory_reason
+    assert "低于推荐标准" in recommended_reason
+    assert "偏离建议" in advisory_reason
+
+
+def test_deposit_limit_is_mandatory_hard_rule() -> None:
+    """定金不得超过主合同标的额 20%（民法典 586 条）——这是硬性规定。"""
+    contract = _contract("甲方向乙方支付定金，定金为合同总金额的30%。")
+    report = compliance.check_compliance(contract)
+
+    item = _find(report, "第五百八十六条")
+    assert item["status"] == "violation"
+    assert item["severity"] == "high"
+    assert item["basis"] == "强制性依据"
+    assert item in report["mandatory_violations"]
+    assert report["mandatory_violation_count"] >= 1
+
+
+def test_penalty_rule_is_advisory_not_hard() -> None:
+    """示范文本的 30% 是指导性建议，超出也不应算「违规」性质的问题。"""
+    contract = _contract("任何一方违约，应支付合同总金额50%的违约金。")
+    item = _find(compliance.check_compliance(contract), "示范3.5")
+
+    assert item["status"] == "violation"
+    assert item["basis"] == "指导性文件"
+    assert item["severity"] == "low"
+
+
+# ============================================================
+#  时效性（v2.0 新增）
+# ============================================================
+
+
+def test_timeliness_notice_when_contract_predates_standard() -> None:
+    """2025 年签订的合同用 2026 年才生效的依据比对，必须提示版本可能不适配。"""
+    contract = _contract("签订日期：2025年6月1日。水分含量不高于14.0%。")
+    report = compliance.check_compliance(contract)
+
+    codes = {notice["standard_code"] for notice in report["timeliness"]}
+    assert "GB 2763-2026" in codes
+    assert "订单农业合同规范指引" in codes
+
+    notice = next(n for n in report["timeliness"] if n["standard_code"] == "GB 2763-2026")
+    assert notice["effective_date"] == "2026-03-01"
+    assert notice["contract_sign_date"] == "2025-06-01"
+
+
+def test_no_timeliness_notice_for_current_contract() -> None:
+    """签订日期晚于依据生效日时不应产生时效提示。"""
+    contract = _contract("签订日期：2026年9月18日。水分含量不高于14.0%。")
+    assert compliance.check_compliance(contract)["timeliness"] == []

@@ -115,7 +115,13 @@ def check_contract(
     results: list[dict[str, Any]] = []
     unmatched: list[dict[str, Any]] = []
 
-    for clause in contract.clauses[:clause_limit]:
+    # index=0 的「合同首部」只是主体信息的载体，不是实质性条款，
+    # 不参与「条款 → 标准」的相似度匹配——碎片化的编号与名称会产出
+    # 无意义的高分匹配（实测出现过首部配上「投入品质量与告知义务」0.995）。
+    # 它仍然参与必备条款覆盖检测，因为主体信息正是《指引》第一条要求的。
+    substantive = [clause for clause in contract.clauses if clause.index != 0]
+
+    for clause in substantive[:clause_limit]:
         hits = search(clause.content, top_k=top_k)
         entry = {
             "clause_index": clause.index,
@@ -135,17 +141,30 @@ def check_contract(
 
     total = len(results)
     matched = total - len(unmatched)
+    clause_match_rate = round(matched / total, 4) if total else 0.0
+
+    coverage_report = checklist.check_coverage(contract)
+    required_total = coverage_report["required_total"]
+    # coverage 的口径在 v2.0 变更：旧口径是"多少条款能匹配上任意标准"，
+    # 而标准库里含万金油条款，该值恒为 100%，没有信息量。
+    # 新口径取「必备条款覆盖率」——这才是"校验"该回答的问题。
+    coverage = (
+        round(coverage_report["required_covered"] / required_total, 4)
+        if required_total
+        else 0.0
+    )
 
     return {
         "doc_id": doc_id,
         "contract_title": contract.title,
         "total_clauses": total,
         "matched_clauses": matched,
-        "coverage": round(matched / total, 4) if total else 0.0,
+        "coverage": coverage,
+        "clause_match_rate": clause_match_rate,
         "unmatched_clauses": unmatched,
         "results": results,
         # 与上面的「条款 → 标准」匹配互补：这里回答"该有的条款有没有"
-        "required_clauses": checklist.check_coverage(contract),
+        "required_clauses": coverage_report,
         # 再把合同值与标准限值比大小：回答"写进去的数字合不合规"
         "compliance": compliance.check_compliance(contract),
         "index": index_info(),

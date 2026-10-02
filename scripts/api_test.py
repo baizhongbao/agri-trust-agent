@@ -162,10 +162,12 @@ def main() -> int:
             )
             response.raise_for_status()
             report = response.json()
+            required = report.get("required_clauses") or {}
             print(
                 f"[OK] POST /api/v1/standards/check  "
-                f"覆盖率={report['coverage']:.0%} "
-                f"({report['matched_clauses']}/{report['total_clauses']})"
+                f"必备条款覆盖 {report['coverage']:.0%} "
+                f"({required.get('required_covered')}/{required.get('required_total')})"
+                f"  条款匹配率 {report.get('clause_match_rate', 0):.0%}"
             )
             for entry in report["results"][:4]:
                 top = entry["matches"][0] if entry["matches"] else None
@@ -177,7 +179,6 @@ def main() -> int:
                 else:
                     print(f"     合同第{entry['clause_index']}条 → 未匹配到标准")
 
-            required = report.get("required_clauses") or {}
             if required:
                 print(
                     f"     必备条款 : {required['required_covered']}/{required['required_total']} 覆盖"
@@ -191,16 +192,19 @@ def main() -> int:
             comp = report.get("compliance") or {}
             if comp:
                 print(f"     数值比对 : {comp['summary']}")
-                labels = {"violation": "违规", "review": "待核", "compliant": "合规"}
+                labels = {"violation": "偏离", "review": "待核", "compliant": "一致"}
                 for item in comp.get("items", []):
                     scope = "/".join(item.get("applies_to") or [])
+                    basis = f" [{item['basis']}]" if item.get("basis") else ""
                     print(
                         f"     [{labels.get(item['status'], '?')}] {item['metric']}："
                         f"合同 {item['contract_value']}{item['contract_unit']} vs "
                         f"{item['standard_code']} {item['clause_no']} "
                         f"{item['standard_value']}{item['standard_unit']}"
-                        f"{'（' + scope + '）' if scope else ''}"
+                        f"{'（' + scope + '）' if scope else ''}{basis}"
                     )
+                for notice in comp.get("timeliness", []):
+                    print(f"     [时效] {notice['message']}")
         except Exception as exc:
             print(f"[FAIL] POST /api/v1/standards/check -> {exc}")
             failures += 1
