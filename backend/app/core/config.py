@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # ---------------- 提供者选择 ----------------
     # 默认全部走离线兜底，保证无凭证、无重依赖也能跑通全链路
     llm_provider: str = "mock"             # pangu | mock
-    ocr_provider: str = "disabled"         # huawei | disabled
+    ocr_provider: str = "disabled"         # cloud | huawei | disabled
     embedding_provider: str = "hashing"    # cloud | local | hashing
     contract_structurer: str = "rule"      # llm | rule
 
@@ -80,10 +80,22 @@ class Settings(BaseSettings):
     ocr_endpoint: str = ""
     ocr_max_retry: int = 3
 
+    # ---------------- 云端视觉 OCR（SiliconFlow，OpenAI 兼容）----------------
+    # 与云端向量化共用 CLOUD_API_BASE_URL / CLOUD_API_KEY
+    ocr_cloud_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"
+    ocr_cloud_timeout: int = 120
+
     # ---------------- 企业核验 ----------------
+    # fixture：内置虚构演示数据（离线默认）；qcc：企查查 MCP（真实工商数据）
     enterprise_api_provider: str = ""
     enterprise_api_base_url: str = ""
     enterprise_api_key: str = ""
+    enterprise_timeout: int = 60
+    enterprise_fixture_path: str = "./data/fixtures/enterprise_fixture.json"
+
+    # ---------------- 履约模拟 ----------------
+    # 裁判规则库：50 份裁判文书的知识提炼（scripts/extract_knowledge.py 生成）
+    simulation_rules_path: str = "./data/knowledge/cases_summary.json"
 
     # ---------------- 标准校验 · RAG ----------------
     embedding_model: str = "BAAI/bge-m3"
@@ -170,6 +182,10 @@ class Settings(BaseSettings):
     @property
     def has_enterprise_credentials(self) -> bool:
         return bool(self.enterprise_api_base_url and self.enterprise_api_key)
+
+    @property
+    def enterprise_fixture_file(self) -> Path:
+        return self.path_of(self.enterprise_fixture_path)
 
 
 settings = Settings()

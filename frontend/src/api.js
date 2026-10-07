@@ -50,3 +50,14 @@ export const searchStandards = (query, topK = 5) =>
 export const getStandardLibrary = () => request('/api/v1/standards')
 
 export const getStandardStats = () => request('/api/v1/standards/stats')
+
+export const verifyContract = (docId) =>
+  postJson('/api/v1/enterprise/verify', { doc_id: docId })
+
+export const lookupEnterprise = (searchKey) =>
+  postJson('/api/v1/enterprise/lookup', { search_key: searchKey })
+
+export const simulateContract = (docId, scenarios = null, params = {}) =>
+  postJson(`/api/v1/simulate/${docId}`, { doc_id: docId, scenarios, params })
+
+export const getSimulationRules = () => request('/api/v1/simulate/rules')

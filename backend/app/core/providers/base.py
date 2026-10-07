@@ -70,6 +70,39 @@ class RerankResult:
     model: str = ""
 
 
+@dataclass
+class RegistrationInfo:
+    """工商登记信息（提供者层 DTO）。
+
+    字段缺失时留空——提供者不得用推测值填充，
+    与「抽取值必须带证据」是同一条纪律。
+    """
+
+    name: str = ""
+    credit_code: str = ""
+    legal_person: str = ""
+    registered_capital: str = ""
+    founding_date: str = ""
+    status: str = ""
+    business_scope: str = ""
+    address: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EnterpriseLookupResult:
+    """企业工商信息查询结果。
+
+    found=False 时 note 必须说明原因（未收录 / 查询出错），
+    不允许静默返回空。
+    """
+
+    found: bool
+    registration: RegistrationInfo | None = None
+    note: str = ""
+    provider: str = "unknown"
+
+
 class OCRProvider(ABC):
     """文字识别提供者。"""
 
@@ -171,3 +204,24 @@ class RerankProvider(ABC):
             "model": self.model,
             "ready": self.is_ready(),
         }
+
+
+class EnterpriseProvider(ABC):
+    """企业工商信息提供者（L2 数据源）。
+
+    `fixture`（虚构演示数据）与 `qcc`（真实数据）共用本接口，
+    无凭证演示与真实核验共用同一条下游链路。
+    """
+
+    name: str = "base"
+
+    @abstractmethod
+    def is_ready(self) -> bool:
+        """是否具备调用条件。"""
+
+    @abstractmethod
+    def lookup(self, search_key: str) -> EnterpriseLookupResult:
+        """按企业名称或统一社会信用代码查询工商登记信息。"""
+
+    def describe(self) -> dict[str, Any]:
+        return {"name": self.name, "ready": self.is_ready()}

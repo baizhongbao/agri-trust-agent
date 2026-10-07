@@ -40,6 +40,10 @@ data/*
 # 但知识库必须入库 —— 标准库与必备条款清单是本项目的核心资产，
 # 不入库则换台机器就要重新整理（Linux 主力机需要它）
 !data/standards/
+# 企业核验演示数据（虚构企业，需随仓库分发，断网演示的兜底）
+!data/fixtures/
+# 裁判规则库（50 份判例提炼，履约模拟模块的运行时依赖，勿删）
+!data/knowledge/
 # 验收基准：示例合同（由 scripts/make_sample_contract.py 确定性生成，约 8KB）
 !data/samples/
 

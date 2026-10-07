@@ -13,6 +13,7 @@ from typing import Any, Callable
 from app.core.config import settings
 from app.core.providers.base import (
     EmbeddingProvider,
+    EnterpriseProvider,
     LLMProvider,
     OCRProvider,
     ProviderNotReadyError,
@@ -23,8 +24,16 @@ from app.core.providers.embedding import (
     HashingEmbeddingProvider,
     LocalEmbeddingProvider,
 )
+from app.core.providers.enterprise import (
+    FixtureEnterpriseProvider,
+    QccEnterpriseProvider,
+)
 from app.core.providers.llm import MockLLMProvider, PanguLLMProvider
-from app.core.providers.ocr import DisabledOCRProvider, HuaweiOCRProvider
+from app.core.providers.ocr import (
+    CloudOCRProvider,
+    DisabledOCRProvider,
+    HuaweiOCRProvider,
+)
 from app.core.providers.rerank import CloudRerankProvider, DisabledRerankProvider
 
 _LLM: dict[str, Callable[[], LLMProvider]] = {
@@ -34,6 +43,7 @@ _LLM: dict[str, Callable[[], LLMProvider]] = {
 
 _OCR: dict[str, Callable[[], OCRProvider]] = {
     "huawei": HuaweiOCRProvider,
+    "cloud": CloudOCRProvider,
     "disabled": DisabledOCRProvider,
 }
 
@@ -46,6 +56,11 @@ _EMBEDDING: dict[str, Callable[[], EmbeddingProvider]] = {
 _RERANK: dict[str, Callable[[], RerankProvider]] = {
     "cloud": CloudRerankProvider,
     "disabled": DisabledRerankProvider,
+}
+
+_ENTERPRISE: dict[str, Callable[[], EnterpriseProvider]] = {
+    "fixture": FixtureEnterpriseProvider,
+    "qcc": QccEnterpriseProvider,
 }
 
 
@@ -76,6 +91,13 @@ def get_rerank_provider() -> RerankProvider:
     return _pick(_RERANK, settings.rerank_provider, "RERANK_PROVIDER")
 
 
+@lru_cache(maxsize=1)
+def get_enterprise_provider() -> EnterpriseProvider:
+    # 未配置时默认 fixture（离线演示兜底），显式配置则按配置走
+    key = (settings.enterprise_api_provider or "").strip().lower() or "fixture"
+    return _pick(_ENTERPRISE, key, "ENTERPRISE_API_PROVIDER")
+
+
 def require(provider: Any, purpose: str) -> None:
     """断言提供者就绪，否则抛出可读的错误。
 
@@ -96,6 +118,7 @@ def describe_providers() -> dict[str, dict[str, Any]]:
         "ocr": get_ocr_provider().describe(),
         "embedding": get_embedding_provider().describe(),
         "rerank": get_rerank_provider().describe(),
+        "enterprise": get_enterprise_provider().describe(),
     }
 
 
@@ -105,3 +128,4 @@ def reset_cache() -> None:
     get_ocr_provider.cache_clear()
     get_embedding_provider.cache_clear()
     get_rerank_provider.cache_clear()
+    get_enterprise_provider.cache_clear()

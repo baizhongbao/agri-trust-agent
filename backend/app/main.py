@@ -15,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import BASE_DIR, settings
 from app.core.providers.registry import describe_providers
 from app.modules.contract_parser.router import router as contract_router
+from app.modules.enterprise_verify.router import router as enterprise_router
+from app.modules.simulation.router import router as simulate_router
 from app.modules.standard_check.router import router as standard_router
 
 logging.basicConfig(
@@ -29,13 +31,14 @@ API_PREFIX = "/api/v1"
 async def lifespan(_: FastAPI):
     settings.ensure_dirs()
     logging.getLogger(__name__).info(
-        "启动完成 | 工作目录=%s | LLM=%s | OCR=%s | Embedding=%s | Rerank=%s | 抽取器=%s",
+        "启动完成 | 工作目录=%s | LLM=%s | OCR=%s | Embedding=%s | Rerank=%s | 抽取器=%s | 企业核验=%s",
         BASE_DIR,
         settings.llm_provider,
         settings.ocr_provider,
         settings.embedding_provider,
         settings.rerank_provider,
         settings.contract_structurer,
+        settings.enterprise_api_provider or "fixture",
     )
     yield
 
@@ -58,6 +61,8 @@ app.add_middleware(
 
 app.include_router(contract_router, prefix=API_PREFIX)
 app.include_router(standard_router, prefix=API_PREFIX)
+app.include_router(enterprise_router, prefix=API_PREFIX)
+app.include_router(simulate_router, prefix=API_PREFIX)
 
 
 @app.get("/", tags=["system"], summary="服务入口")

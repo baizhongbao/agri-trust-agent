@@ -98,7 +98,8 @@ def read_pdf(pdf_bytes: bytes, filename: str = "") -> PdfText:
     if not provider.is_ready():
         result.warnings.append(
             "疑似扫描件（每页文本量过少），但 OCR 未启用。"
-            "如需处理扫描件，请设置 OCR_PROVIDER=huawei 并配置华为云 AK/SK。"
+            "如需处理扫描件，请设置 OCR_PROVIDER=cloud（配 CLOUD_API_KEY）"
+            "或 OCR_PROVIDER=huawei（配华为云 AK/SK）。"
         )
         logger.info("判定为扫描件但 OCR 未就绪，文件名=%s", filename or "<unknown>")
         return result

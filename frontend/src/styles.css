@@ -137,6 +137,11 @@ code,
   color: var(--red-600);
 }
 
+.tag-sky {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
 /* ---------- 表单 ---------- */
 
 input[type='text'],

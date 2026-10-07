@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
-import { checkStandards, getHealth, parseContract } from './api'
+import { checkStandards, getHealth, parseContract, simulateContract, verifyContract } from './api'
 import ContractPanel from './components/ContractPanel.vue'
+import EnterprisePanel from './components/EnterprisePanel.vue'
 import ProviderCard from './components/ProviderCard.vue'
+import SimulationPanel from './components/SimulationPanel.vue'
 import StandardPanel from './components/StandardPanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
 
@@ -11,6 +13,8 @@ const health = ref(null)
 const contract = ref(null)
 const docId = ref('')
 const report = ref(null)
+const enterpriseReport = ref(null)
+const simReport = ref(null)
 const activeTab = ref('contract')
 const busy = ref(false)
 const error = ref('')
@@ -34,6 +38,8 @@ async function handleUpload(file) {
   busy.value = true
   error.value = ''
   report.value = null
+  enterpriseReport.value = null
+  simReport.value = null
   progressText.value = '正在解析合同…'
 
   try {
@@ -59,6 +65,42 @@ async function runStandardCheck() {
   try {
     report.value = await checkStandards(docId.value, 3)
     activeTab.value = 'standard'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = false
+    progressText.value = ''
+  }
+}
+
+async function runEnterpriseVerify() {
+  if (!docId.value || busy.value) return
+
+  busy.value = true
+  error.value = ''
+  progressText.value = '正在核验合同主体…'
+
+  try {
+    enterpriseReport.value = await verifyContract(docId.value)
+    activeTab.value = 'enterprise'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = false
+    progressText.value = ''
+  }
+}
+
+async function runSimulation() {
+  if (!docId.value || busy.value) return
+
+  busy.value = true
+  error.value = ''
+  progressText.value = '正在推演履约风险…'
+
+  try {
+    simReport.value = await simulateContract(docId.value)
+    activeTab.value = 'simulate'
   } catch (e) {
     error.value = e.message
   } finally {
@@ -104,7 +146,7 @@ async function runStandardCheck() {
           <ol>
             <li>上传一份订单农业合同 PDF</li>
             <li>查看结构化字段与原文依据</li>
-            <li>点击「校验标准」比对标准库</li>
+            <li>校验标准、核验企业、推演履约风险</li>
           </ol>
         </div>
       </aside>
@@ -127,11 +169,43 @@ async function runStandardCheck() {
             标准校验
             <span v-if="report" class="tab-badge">{{ report.matched_clauses }}</span>
           </button>
+          <button
+            class="tab"
+            :class="{ active: activeTab === 'enterprise' }"
+            :disabled="!enterpriseReport"
+            @click="activeTab = 'enterprise'"
+          >
+            企业核验
+            <span v-if="enterpriseReport" class="tab-badge">{{ enterpriseReport.parties?.length }}</span>
+          </button>
+          <button
+            class="tab"
+            :class="{ active: activeTab === 'simulate' }"
+            :disabled="!simReport"
+            @click="activeTab = 'simulate'"
+          >
+            履约模拟
+            <span v-if="simReport" class="tab-badge">{{ simReport.scenarios?.length }}</span>
+          </button>
 
           <div class="tabs-spacer" />
 
           <button class="btn btn-primary" :disabled="!docId || busy" @click="runStandardCheck">
             校验标准
+          </button>
+          <button
+            class="btn btn-ghost"
+            :disabled="!docId || busy"
+            @click="runEnterpriseVerify"
+          >
+            核验企业
+          </button>
+          <button
+            class="btn btn-ghost"
+            :disabled="!docId || busy"
+            @click="runSimulation"
+          >
+            履约模拟
           </button>
         </nav>
 
@@ -147,7 +221,9 @@ async function runStandardCheck() {
         </div>
 
         <ContractPanel v-else-if="activeTab === 'contract'" :contract="contract" />
-        <StandardPanel v-else-if="report" :report="report" />
+        <StandardPanel v-else-if="report && activeTab === 'standard'" :report="report" />
+        <EnterprisePanel v-else-if="enterpriseReport && activeTab === 'enterprise'" :report="enterpriseReport" />
+        <SimulationPanel v-else-if="simReport && activeTab === 'simulate'" :report="simReport" />
       </section>
     </main>
   </div>

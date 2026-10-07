@@ -15,10 +15,13 @@
 
 | 模块 | 优先级 | 状态 | 做什么 |
 |---|---|---|---|
-| 合同解析 | **P0** | ✅ 已完成 | 上传 PDF → 结构化合同字段（带原文依据） |
-| 标准校验 | **P0** | ✅ 已完成 | 合同条款 → 匹配标准库条款 + 覆盖率 |
-| 企业核验 | P1 | ⬜ 待做 | 企业名称 → 工商信息 |
-| 履约模拟 | P1 | ⬜ 待做 | 合同 + 参数 → 风险场景推演 |
+| 合同解析 | **P0** | ✅ 已完成 | 上传 PDF → `fields`（展示层）+ `facts`（推理层，金额/日期/指标数值化），全部带原文依据 |
+| 标准校验 | **P0** | ✅ 已完成 | 四层：混合召回 → 精排 → 必备条款缺失检测（18 项清单）→ 数值合规比对（32 条限值） |
+| 企业核验 | P1 | ✅ 已完成 | L1 信用代码校验位验算（GB 32100-2015）→ L2 工商查询（企查查/fixture）→ L3 合同 vs 登记交叉校验 |
+| 履约模拟 | P1 | ✅ 已完成 | 三情景推演：数值由 Python 计算 + 真实判例引用 + LLM 定性分析（mock 可降级） |
+
+> 两大 P1 已于 2026-10-07 完成并合入（单元测试 106 个全部通过）。
+> **尚未完成**：汇总判定层、报告导出、AgentArts 接入（详见第 11 节）。
 
 ---
 
@@ -29,9 +32,11 @@
 | 后端 | Python 3.11+（Windows 开发机为 3.13）· FastAPI |
 | 前端 | Vue3 + Vite（**不引入 UI 框架**） |
 | 大模型 | 华为云盘古 · ModelArts Studio（MaaS，OpenAI 兼容接口） |
-| OCR | 华为云文字识别（仅扫描件需要） |
+| OCR | 华为云文字识别（Linux 目标）· SiliconFlow PaddleOCR-VL（Windows 当前）· 仅扫描件需要 |
 | 向量化 | `BAAI/bge-m3`：云端 SiliconFlow（Windows 默认）· 本地权重（Linux 有显卡）· 哈希兜底（断网） |
 | 检索 | 向量 + BM25 混合召回 → `BAAI/bge-reranker-v2-m3` 精排（可选，失败自动降级） |
+| 企业工商数据 | 企查查 MCP（`qcc`，已配 Key）· 内置 fixture 演示库（离线兜底） |
+| 履约模拟 | 纯 Python 数值计算 + 50 份裁判文书知识提炼的规则库（LLM 仅做定性解释，不碰数字） |
 | 存储 | SQLite + 本地文件 + 内存索引 |
 
 ### 不要擅自引入
@@ -57,10 +62,11 @@
 | 开关 | Windows | Linux（拿到凭证后） |
 |---|---|---|
 | `LLM_PROVIDER` | `mock` | `pangu` |
-| `OCR_PROVIDER` | `disabled` | `huawei` |
+| `OCR_PROVIDER` | `cloud`（SiliconFlow PaddleOCR-VL） | `huawei` |
 | `EMBEDDING_PROVIDER` | `cloud`（SiliconFlow bge-m3） | `local` |
 | `RERANK_PROVIDER` | `cloud`（bge-reranker-v2-m3） | `cloud` / `disabled` |
 | `CONTRACT_STRUCTURER` | `rule` | `llm` |
+| `ENTERPRISE_API_PROVIDER` | `qcc`（已配 Key） | `qcc` / `fixture` |
 | `VECTOR_STORE_BACKEND` | `simple` | `chroma` |
 
 > 向量化三选一：`cloud`（云端 bge-m3，无需显卡与权重，Windows 默认）、
@@ -135,35 +141,52 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 │           ├── contract_parser/   ✅ P0
 │           │   ├── pdf_reader.py    文本层直抽，扫描件自动降级 OCR
 │           │   ├── structurer.py    规则 / 大模型双实现
-│           │   ├── schema.py        数据模型（含 evidence）
+│           │   ├── facts.py         可推理事实抽取（金额/日期/指标数值化）
+│           │   ├── schema.py        数据模型（fields + facts 双层，含 evidence）
 │           │   ├── storage.py       落盘与查询
 │           │   ├── service.py       编排
 │           │   └── router.py        HTTP 接口
 │           ├── standard_check/    ✅ P0
 │           │   ├── loader.py        标准库加载
-│           │   ├── store.py         哈希向量 + BM25 混合检索
+│           │   ├── store.py         向量 + BM25 混合检索 + 精排
+│           │   ├── checklist.py     必备条款清单（18 项）与覆盖检测
+│           │   ├── compliance.py    数值合规比对（32 条限值）
 │           │   ├── service.py       校验编排 + 自动降级
 │           │   └── router.py
-│           ├── enterprise_verify/ ⬜ P1 占位
-│           └── simulation/        ⬜ P1 占位
+│           ├── enterprise_verify/ ✅ P1
+│           │   ├── credit_code.py   L1 校验位验算（GB 32100-2015）
+│           │   ├── cross_check.py   L3 合同 vs 登记交叉校验
+│           │   ├── schema.py        报告数据模型
+│           │   ├── service.py       L1→L2→L3 编排
+│           │   └── router.py
+│           └── simulation/        ✅ P1
+│               ├── calculator.py    三情景纯 Python 数值计算（calc_steps 可复核）
+│               ├── rulebook.py      裁判规则库检索（50 份判例提炼）
+│               ├── schema.py        模拟报告数据模型
+│               ├── service.py       计算 → 引用 → LLM 定性（可降级）
+│               └── router.py
+│   └── tests/                    单元测试 106 个（7 个文件）
 │
 ├── frontend/                     Vue3 + Vite
 │   ├── vite.config.js            代理 /api 与 /health 到 127.0.0.1:8000
 │   └── src/
-│       ├── App.vue
+│       ├── App.vue               四页签主布局 + 离线模式提示
 │       ├── api.js                接口封装
 │       ├── styles.css            设计系统
-│       └── components/           UploadPanel / ContractPanel / StandardPanel / ProviderCard
+│       └── components/           Upload / Contract / Standard / Enterprise / Simulation / ProviderCard
 │
 ├── data/
-│   ├── standards/                标准库语料 JSON（知识来源）
-│   ├── samples/                  示例合同 PDF
+│   ├── standards/                标准库语料 JSON（依据库 v2.0 + 必备条款清单）
+│   ├── knowledge/                裁判文书知识库（50 份案例提炼，cases_summary.json）
+│   ├── fixtures/                 企业核验离线演示数据（虚构企业）
+│   ├── samples/                  示例合同 PDF（电子版 + 扫描件）
 │   ├── contracts/                解析结果（运行时生成，勿删）
 │   └── uploads/                  合同原件副本
 │
-├── docs/ENV-REPORT.md            环境检查报告
+├── docs/                         环境报告 / 技术分析 / 交接文档 / 法规原文
 └── scripts/
     ├── make_sample_contract.py   生成示例合同（PyMuPDF 内置中文字体，跨平台一致）
+    ├── extract_knowledge.py      裁判文书知识提炼（一次性数据准备，LLM 辅助）
     ├── smoke_test.py             端到端冒烟测试（不启服务）
     ├── api_test.py               HTTP 接口测试（需服务已启动）
     ├── check_env.ps1             Windows 环境体检
@@ -222,6 +245,10 @@ Copy-Item .env.example .env
 | POST | `/api/v1/standards/search` | 按文本检索标准条款 |
 | POST | `/api/v1/standards/check` | 校验某份合同的条款覆盖 |
 | POST | `/api/v1/standards/reindex` | 重建检索库 |
+| POST | `/api/v1/enterprise/verify` | 核验某份合同的全部主体（L1+L2+L3） |
+| POST | `/api/v1/enterprise/lookup` | 直接查询单个企业（本地校验 + 工商信息） |
+| POST | `/api/v1/simulate/{doc_id}` | 履约模拟（价格波动 / 自然灾害 / 一方违约） |
+| GET | `/api/v1/simulate/rules` | 裁判规则库状态 |
 
 ---
 
@@ -230,14 +257,17 @@ Copy-Item .env.example .env
 **不接受"我看代码应该没问题"。** 任何影响链路的改动都要跑：
 
 ```powershell
-# 1. 端到端冒烟（不启服务，最快）
+# 1. 单元测试（最快，不启服务）
+.venv\Scripts\python.exe -m pytest backend\tests -q
+
+# 2. 端到端冒烟（不启服务）
 .venv\Scripts\python.exe scripts\smoke_test.py
 
-# 2. 接口测试（需服务已启动）
+# 3. 接口测试（需服务已启动）
 .venv\Scripts\python.exe scripts\api_test.py
 ```
 
-**通过标准：字段命中率必须是 8/8，接口用例必须全过。**
+**通过标准：单元测试 106 个全过，字段命中率必须是 8/8，接口用例必须全过。**
 
 若改动了规则抽取：以 `data/samples/订单农业合同_示例.pdf` 为基准，9 个字段（含合同名称）应全部正确抽取。
 
@@ -264,6 +294,8 @@ Copy-Item .env.example .env
 | 扫描件无 OCR 时 | 会返回明确告警而非空结果，属预期行为 |
 | **本机装了系统代理时接口偶发 502** | httpx 会自动读取 Windows 系统代理（本机为 `127.0.0.1:7897`），连 `127.0.0.1` 的本地请求也会被 `CONNECT` 隧道转发，长耗时请求（如 `/standards/check`）会撞代理超时被回 **502 空响应**。`.env` 里的 `HTTP_PROXY=` 无法覆盖（pydantic 不会写回 `os.environ`）。排查时在测试脚本里显式传 `trust_env=False`，或临时关掉代理 |
 | 云端向量化已启用 | `EMBEDDING_PROVIDER=cloud` 会把标准库语料与合同条款正文发到 SiliconFlow。断网演示前必须切回 `hashing` + `disabled` |
+| 企业核验走 qcc | `ENTERPRISE_API_PROVIDER=qcc` 依赖外网访问企查查 MCP。断网演示前切回 `fixture`；fixture 全部为虚构企业，代码校验位均真实有效 |
+| LLM 抽取器未实测 | `CONTRACT_STRUCTURER=llm` 代码就绪但从未接真实盘古跑过。切换后先冒烟验证，再用于演示 |
 
 ---
 
@@ -272,23 +304,28 @@ Copy-Item .env.example .env
 ### 已完成并验证
 
 - [x] 项目骨架、跨平台可移植配置、Provider 抽象层
-- [x] **合同解析 P0**：PDF 上传 → 文本抽取（含扫描件 OCR 降级）→ 规则/LLM 双抽取器 → 落盘
-- [x] **标准校验 P0**：标准库加载 → 混合检索 → 条款覆盖率报告
-- [x] 前端界面：上传、结构化结果、标准校验、运行环境状态
-- [x] 测试脚本：冒烟测试 + 接口测试，全部通过
+- [x] **合同解析 P0**：PDF 上传 → 文本抽取（含扫描件 OCR 降级）→ 规则/LLM 双抽取器 → fields + facts 双层落盘
+- [x] **标准校验 P0**：依据库 v2.0（8 部 / 48 条条款 / 32 条限值）→ 混合检索 + 精排 → 必备条款缺失检测（18 项）→ 数值合规比对
+- [x] **企业核验 P1**：L1 校验位验算（GB 32100-2015）→ L2 工商查询（企查查 MCP 已配 Key，fixture 兜底）→ L3 合同 vs 登记交叉校验（名称/代码/成立日期/登记状态/经营范围）
+- [x] **履约模拟 P1**：三情景（价格波动/自然灾害/一方违约）纯 Python 数值计算（calc_steps 可复核）+ 50 份裁判文书规则库引用 + LLM 定性分析（mock 可降级）
+- [x] 前端界面：上传、结构化结果、标准校验、企业核验、履约模拟、运行环境状态
+- [x] 测试：单元测试 106 个（7 文件）+ 冒烟测试 + 接口测试，全部通过
 
 ### 下一步（建议顺序）
 
-1. **企业核验 P1** —— 接口 + mock 实现先行，等凭证到位切真实 API
-2. **履约模拟 P1** —— 用 LangGraph 编排，接盘古做风险推演
-3. **接入华为云真实凭证** —— 切换 4 个 Provider 开关，联调
-4. **演示准备** —— 演示脚本、断网演练、录屏
+1. **接盘古 + 实测 LLM 抽取器** —— 代码就绪但从未跑过真实模型，切 `LLM_PROVIDER=pangu` 后必须先冒烟
+2. **AgentArts 接入** —— 参赛资格线。把现有 REST 接口经 API 网关包成 MCP Target，需先解决后端公网可达
+3. **标的品类识别** —— 解决「水分 14.5% 对籼米一致、对籼稻谷偏离」的矛盾结论（`facts.subject_category` + 合规比对适用性过滤）
+4. **前端展示必备条款缺失 + 数值比对** —— 后端已产出，前端不可见
+5. **doc_id 冲突修复** —— `new_doc_id()` 是秒级时间戳，同秒上传两份会互相覆盖
+6. **汇总判定层 + 报告导出** —— 串起四模块，先出分项不要过早上加权总分
+7. **演示准备** —— 演示脚本、断网演练、录屏
 
 ### 待人类完成（AI 无法代做）
 
 - [ ] 华为云控制台开通 **ModelArts Studio（MaaS）** 并获取 API Key
-- [ ] 开通 **文字识别 OCR** 并获取 AK/SK + Region
-- [ ] 确认企业信息数据源（第三方 API 或 MCP）
+- [ ] 开通 **文字识别 OCR** 并获取 AK/SK + Region（当前用 SiliconFlow PaddleOCR-VL 过渡）
+- [ ] AgentArts（智果）平台开通 + 后端公网可达地址（部署/内网穿透/APIG 三选一）
 
 ---
 
@@ -305,3 +342,17 @@ Demo 阶段语料仅 30~几百条，纯 Python 完全够用，且 Windows 上零
 **为什么每个字段都要 evidence**
 订单农业的核心诉求是"可信"。只给结论不给依据，等于让使用者盲信模型。
 `evidence` 存支撑该字段的原文片段，使结果可回溯、可复核。
+
+**为什么 fields 之外还要 facts**
+`fields` 的值是原文片段，人看得懂但机器算不了（「486,000元」没法比大小）。
+`facts` 把金额变数值、日期变 ISO、指标变成 (名称, 比较符, 阈值) 三元组，
+下游的合规比对、交叉校验、履约模拟全靠它。
+
+**为什么数值不交给 LLM**
+合规比对和损失计算要求数字精确，模型把 14.5 读成 15 就是事故。
+所以 facts 抽取、履约模拟的数值计算全部是规则/纯 Python，
+LLM 只负责语义理解（条款分类、定性风险分析）。
+
+**为什么判不了就返回 review**
+`review`（需人工核对）优于错误的确定结论。企业核验里登记状态不在已知集合、
+日期无法解析、角色识别失败，都显式给 review 而不是硬拍一个 pass/fail。
