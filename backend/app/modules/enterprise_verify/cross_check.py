@@ -56,9 +56,9 @@ def detect_role(party: Party) -> str:
         return "buyer"
     if any(k in text for k in ("种植", "供应", "生产", "农场", "合作社", "养殖")):
         return "producer"
-    if "甲方" in party.role:
+    if "甲方" in party.role or "需方" in party.role:
         return "buyer"
-    if "乙方" in party.role:
+    if "乙方" in party.role or "供方" in party.role:
         return "producer"
     return "unknown"
 
@@ -285,5 +285,56 @@ def run_l3_checks(
                         evidence=f"经营范围：{scope[:120]}",
                     )
                 )
+
+    # 6. 违法与经营风险（行政处罚 / 经营异常 / 失信被执行人等）
+    violations = registration.violations
+    if violations is None:
+        checks.append(
+            CheckItem(
+                key="violations",
+                label="违法与经营风险",
+                status=STATUS_REVIEW,
+                detail=(
+                    "工商数据源未返回该主体的违法/经营风险记录（数据覆盖或定价档位限制），"
+                    "行政处罚、经营异常、被执行人等风险需另行人工核验"
+                ),
+            )
+        )
+    elif not violations:
+        checks.append(
+            CheckItem(
+                key="violations",
+                label="违法与经营风险",
+                status=STATUS_PASS,
+                detail="监管部门登记信息中未查到该主体的行政处罚、经营异常、失信等记录",
+                evidence="数据源：已核查，无违法记录",
+            )
+        )
+    elif any(k in "".join(violations) for k in ("失信", "被执行", "限高", "限制消费")):
+        checks.append(
+            CheckItem(
+                key="violations",
+                label="违法与经营风险",
+                status=STATUS_FAIL,
+                detail=(
+                    "该主体存在失信被执行人/被执行/限制消费等严重信用风险记录，"
+                    "履约能力与应收账款回款风险显著，建议终止合作或设置担保"
+                ),
+                evidence="违法及风险记录：" + "；".join(str(v) for v in violations),
+            )
+        )
+    else:
+        checks.append(
+            CheckItem(
+                key="violations",
+                label="违法与经营风险",
+                status=STATUS_WARNING,
+                detail=(
+                    "该主体存在行政处罚、经营异常等违法/风险记录，"
+                    "提示经营合规性与履约稳定性风险，需结合情节轻重人工研判"
+                ),
+                evidence="违法及风险记录：" + "；".join(str(v) for v in violations),
+            )
+        )
 
     return checks

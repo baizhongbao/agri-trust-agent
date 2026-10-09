@@ -37,6 +37,7 @@ def _reg(**overrides) -> RegistrationInfo:
         founding_date="2015-06-18",
         status="存续",
         business_scope="粮食收购、销售；农产品初加工",
+        violations=[],
     )
     base.update(overrides)
     return RegistrationInfo(**base)
@@ -137,6 +138,45 @@ def test_l3_chinese_date_is_parsed() -> None:
         PARTY_A, _reg(founding_date="2015年6月18日"), _facts_with_sign_date("2026-09-18")
     )}
     assert items["founding_vs_sign"].status == "pass"
+
+
+# ---------------- 违法与经营风险（violations） ----------------
+
+def test_l3_violations_absent_is_review() -> None:
+    """数据源未返回违法记录（None）时应 review，而不是假装无记录。"""
+    items = {item.key: item for item in cross_check.run_l3_checks(
+        PARTY_A, _reg(violations=None), _facts_with_sign_date("2026-09-18")
+    )}
+    assert items["violations"].status == "review"
+    assert "未返回" in items["violations"].detail
+
+
+def test_l3_violations_clean_is_pass() -> None:
+    """已核查且无记录（空列表）为 pass。"""
+    items = {item.key: item for item in cross_check.run_l3_checks(
+        PARTY_A, _reg(violations=[]), _facts_with_sign_date("2026-09-18")
+    )}
+    assert items["violations"].status == "pass"
+
+
+def test_l3_violations_administrative_warns() -> None:
+    """行政处罚/经营异常等一般风险记录 → warning。"""
+    items = {item.key: item for item in cross_check.run_l3_checks(
+        PARTY_A,
+        _reg(violations=["行政处罚：因虚假宣传被罚款3万元", "经营异常名录"]),
+        _facts_with_sign_date("2026-09-18"),
+    )}
+    assert items["violations"].status == "warning"
+
+
+def test_l3_violations_credit_crisis_fails() -> None:
+    """失信/被执行/限高等严重信用风险 → fail。"""
+    items = {item.key: item for item in cross_check.run_l3_checks(
+        PARTY_A,
+        _reg(violations=["被执行人：2026年3月被纳入被执行人名单"]),
+        _facts_with_sign_date("2026-09-18"),
+    )}
+    assert items["violations"].status == "fail"
 
 
 def test_role_detection() -> None:
@@ -249,3 +289,54 @@ def test_service_lookup_short_name_skips_l1() -> None:
     result = service.lookup("比亚迪", provider=PROVIDER)
     assert result["l1"] == []
     assert result["l2_status"] == "not_found"
+
+
+# ---------------- L4 门禁的下游半段：不得静默跳过 ----------------
+
+
+def test_service_notice_when_no_parties(monkeypatch) -> None:
+    """事故回归：主体为空时不能只返回 summary 全 0 了事。
+
+    全 0 会被读成「已核验、无风险」，真相是一次工商查询都没发出。
+    """
+    from app.modules.contract_parser.schema import StructuredContract
+
+    contract = StructuredContract(title="购销合同", parties=[])
+    monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: contract)
+    report = service.verify_contract("test-doc", provider=PROVIDER)
+
+    assert report.parties == []
+    assert report.summary == {"pass": 0, "warning": 0, "fail": 0, "review": 0}
+    assert report.notice, "主体为空必须给出显式说明"
+    assert "未执行" in report.notice
+    assert "不表示" in report.notice
+
+
+def test_service_notice_when_credit_code_missing(monkeypatch) -> None:
+    """无统一社会信用代码时只能按名称查，必须说明 L1 校验位未跑。"""
+    from app.modules.contract_parser.schema import StructuredContract
+
+    contract = StructuredContract(
+        title="购销合同",
+        parties=[Party(role="供方", name="四川光亚新材料科技有限公司")],
+    )
+    monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: contract)
+    report = service.verify_contract("test-doc", provider=PROVIDER)
+
+    assert report.parties
+    assert "统一社会信用代码" in report.notice
+    assert "L1" in report.notice
+
+
+def test_service_no_notice_for_clean_contract(monkeypatch) -> None:
+    """正常情况必须留白——notice 一旦常态化就没人看了。"""
+    from app.modules.contract_parser.schema import StructuredContract
+
+    contract = StructuredContract(
+        title="测试合同",
+        parties=[PARTY_A, PARTY_B],
+        facts=_facts_with_sign_date("2026-09-18"),
+    )
+    monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: contract)
+    report = service.verify_contract("test-doc", provider=PROVIDER)
+    assert report.notice == ""

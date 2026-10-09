@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     ocr_provider: str = "disabled"         # cloud | huawei | disabled
     embedding_provider: str = "hashing"    # cloud | local | hashing
     contract_structurer: str = "rule"      # llm | rule
+    # L1→L2 自动升级：auto（默认，命中触发条件时用 LLM 重解析）| off（只跑 L1）
+    # 触发条件见 contract_parser/gate.py::needs_escalation
+    contract_escalation: str = "auto"
 
     # ---------------- 华为云 · 通用认证 ----------------
     huawei_cloud_ak: str = ""
@@ -119,6 +122,14 @@ class Settings(BaseSettings):
     embedding_cloud_dim: int = 1024          # bge-m3 固定 1024 维
     embedding_cloud_batch_size: int = 32
     rerank_provider: str = "disabled"        # disabled | cloud
+
+    # ---------------- 联网搜索（Tavily）----------------
+    # Agent 加深时的外部证据来源：企业违法 / 判例 / 订单农业政策风险等
+    # tavily —— Tavily API（真实联网）；disabled —— 离线降级（返回空结果 + 说明）
+    search_provider: str = "disabled"        # tavily | disabled
+    tavily_api_key: str = ""
+    tavily_max_results: int = 5
+    tavily_timeout: int = 30
 
     # ---------------- 存储 ----------------
     database_url: str = "sqlite:///./data/app.db"
@@ -182,6 +193,10 @@ class Settings(BaseSettings):
     @property
     def has_enterprise_credentials(self) -> bool:
         return bool(self.enterprise_api_base_url and self.enterprise_api_key)
+
+    @property
+    def has_tavily_credentials(self) -> bool:
+        return bool(self.tavily_api_key)
 
     @property
     def enterprise_fixture_file(self) -> Path:

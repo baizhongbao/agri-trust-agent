@@ -90,6 +90,7 @@ class FixtureEnterpriseProvider(EnterpriseProvider):
                 status=record.get("status", ""),
                 business_scope=record.get("business_scope", ""),
                 address=record.get("address", ""),
+                violations=record.get("violations"),
                 raw={"remark": record.get("remark", ""), "source": "fixture"},
             ),
             provider=self.name,
@@ -117,6 +118,24 @@ class QccEnterpriseProvider(EnterpriseProvider):
         "经营范围": "business_scope",
         "注册地址": "address",
     }
+
+    # 企查查返回的违法/风险相关字段（存在即拼接进 violations）
+    _VIOLATION_KEYS = (
+        "经营异常",
+        "行政处罚",
+        "严重违法",
+        "被执行人",
+        "失信被执行人",
+        "限制消费令",
+        "股权冻结",
+        "破产",
+        "开庭公告",
+        "立案信息",
+        "法律诉讼",
+        "司法协助",
+        "经营风险",
+        "历史风险",
+    )
 
     def is_ready(self) -> bool:
         return bool(settings.enterprise_api_base_url and settings.enterprise_api_key)
@@ -178,15 +197,24 @@ class QccEnterpriseProvider(EnterpriseProvider):
                 provider=self.name,
             )
 
-        fields: dict = {}
+        fields = {}
         for source, target in self._FIELD_MAP.items():
             value = inner.get(source, "")
             if isinstance(value, list):
                 value = "、".join(str(v) for v in value)
             fields[target] = str(value or "")
-        fields["raw"] = inner
 
+        violations: list[str] | None = None
+        hit = next((k for k in self._VIOLATION_KEYS if inner.get(k)), None)
+        if hit:
+            violations = [inner[hit]] if isinstance(inner[hit], str) else list(inner[hit])
+        elif "风险" in inner or "违法" in inner:
+            violations = [str(inner[hit]) for hit in ("风险", "违法") if inner.get(hit)]
+
+        fields["raw"] = inner
         registration = RegistrationInfo(**fields)
+        if violations is not None:
+            registration.violations = violations
         if not registration.name and not registration.credit_code:
             return EnterpriseLookupResult(
                 found=False,

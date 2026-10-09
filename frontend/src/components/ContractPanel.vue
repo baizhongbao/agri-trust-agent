@@ -16,6 +16,10 @@ const visibleClauses = computed(() =>
   showAllClauses.value ? clauses.value : clauses.value.slice(0, 4),
 )
 
+// 解析质量门禁（L4）：blocked 必须置顶警示，不能只当作一条普通 warning
+const gate = computed(() => props.contract.gate || null)
+const gateLevel = computed(() => gate.value?.level || 'ok')
+
 const hitCount = computed(() => fields.value.filter((item) => item.value).length)
 const hitRate = computed(() =>
   fields.value.length ? Math.round((hitCount.value / fields.value.length) * 100) : 0,
@@ -62,6 +66,33 @@ function confidenceClass(confidence) {
           <span class="metric-label">条款数量</span>
         </div>
       </div>
+    </div>
+
+    <!-- 解析质量门禁：blocked / degraded 必须在最上方就能看到 -->
+    <div
+      v-if="gate && gateLevel !== 'ok'"
+      class="card card-pad gate-card"
+      :class="`gate-${gateLevel}`"
+    >
+      <div class="gate-head">
+        <span class="tag" :class="gateLevel === 'blocked' ? 'tag-red' : 'tag-amber'">
+          {{ gateLevel === 'blocked' ? '解析失败' : '解析不完整' }}
+        </span>
+        <strong>{{ gate.summary }}</strong>
+      </div>
+      <ul>
+        <li v-for="(failure, index) in gate.failures" :key="index">
+          <b>{{ failure.label }}</b>：{{ failure.detail }}
+        </li>
+      </ul>
+      <p v-if="gate.escalated" class="gate-escalation">
+        L1→L2 升级：触发「{{ gate.escalation_reason }}」→ {{ gate.escalation_note }}
+      </p>
+      <p class="gate-impact">
+        {{ gateLevel === 'blocked'
+          ? '下游企业核验 / 标准校验 / 履约模拟的结论不可信，请先修复解析或人工补录。'
+          : '下游结论需附带上述缺失标注，不得当作完整结论使用。' }}
+      </p>
     </div>
 
     <div v-if="warnings.length" class="card card-pad warning-card">
@@ -378,6 +409,57 @@ function confidenceClass(confidence) {
   color: var(--slate-700);
   line-height: 1.75;
   white-space: pre-wrap;
+}
+
+.gate-card {
+  font-size: 13.5px;
+}
+
+.gate-blocked {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.gate-degraded {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.gate-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.gate-blocked .gate-head strong {
+  color: var(--red-600, #dc2626);
+}
+
+.gate-degraded .gate-head strong {
+  color: var(--amber-600);
+}
+
+.gate-card ul {
+  padding-left: 18px;
+  color: var(--slate-600, #475569);
+}
+
+.gate-card li + li {
+  margin-top: 3px;
+}
+
+.gate-escalation {
+  margin-top: 8px;
+  color: var(--slate-500, #64748b);
+  font-size: 12.5px;
+}
+
+.gate-impact {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .warning-card {

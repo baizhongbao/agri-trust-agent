@@ -44,6 +44,23 @@ function fmtStepResult(value) {
 function quote(text) {
   return String(text || '')
 }
+
+function currentTierLabel(scenario) {
+  const tiers = scenario.params?.tiers
+  if (!tiers?.length) return ''
+  if (scenario.scenario === 'price_fluctuation') {
+    const pct = Number(scenario.params?.price_change_pct ?? 0)
+    const closest = tiers.reduce((a, b) =>
+      Math.abs(Number(b.pct) - pct) < Math.abs(Number(a.pct) - pct) ? b : a
+    )
+    return closest.label
+  }
+  const loss = Number(scenario.params?.loss_ratio_pct ?? 0)
+  const closest = tiers.reduce((a, b) =>
+    Math.abs(Number(b.pct) - loss) < Math.abs(Number(a.pct) - loss) ? b : a
+  )
+  return closest.label
+}
 </script>
 
 <template>
@@ -58,6 +75,9 @@ function quote(text) {
           <span class="tag tag-slate" title="裁判规则库规模">{{ rulebookTotal }} 条判例</span>
         </div>
       </div>
+
+      <!-- 算不了数时必须说清：空表不等于无风险 -->
+      <p v-if="report.notice" class="notice">{{ report.notice }}</p>
     </div>
 
     <div
@@ -87,6 +107,55 @@ function quote(text) {
 
       <template v-if="scenario.computable">
         <p class="summary">{{ scenario.summary }}</p>
+
+        <div v-if="scenario.params?.tiers?.length" class="tiers">
+          <div class="tiers-head">
+            <span class="tiers-title">敏感性区间</span>
+            <span class="tiers-hint">
+              {{ scenario.scenario === 'price_fluctuation' ? '市场价涨跌' : '减产比例' }}
+            </span>
+          </div>
+          <div class="tier-grid">
+            <div
+              v-for="tier in scenario.params.tiers"
+              :key="tier.label"
+              class="tier"
+              :class="{ 'tier-current': tier.label === currentTierLabel(scenario) }"
+            >
+              <span class="tier-label">{{ tier.label }}</span>
+              <template v-if="scenario.scenario === 'price_fluctuation'">
+                <div class="tier-row">
+                  <span class="tier-key">市场交易额</span>
+                  <span class="tier-val">{{ fmtMoney(tier.market_value) }}</span>
+                </div>
+                <div class="tier-row">
+                  <span class="tier-key">偏离</span>
+                  <span class="tier-val" :class="{ neg: tier.deviation < 0 }">
+                    {{ fmtMoney(tier.deviation) }}
+                  </span>
+                </div>
+                <div class="tier-row" v-if="tier.incentive_party">
+                  <span class="tier-key">诱因方</span>
+                  <span class="tier-val">{{ tier.incentive_party }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="tier-row" v-if="tier.shortfall_quantity !== undefined">
+                  <span class="tier-key">交付缺口</span>
+                  <span class="tier-val neg">{{ fmt(tier.shortfall_quantity) }}</span>
+                </div>
+                <div class="tier-row">
+                  <span class="tier-key">缺口货值</span>
+                  <span class="tier-val">{{ fmtMoney(tier.loss_amount) }}</span>
+                </div>
+              </template>
+            </div>
+          </div>
+          <p class="tiers-note">
+            三档敏感性对比：当前参数命中「{{ currentTierLabel(scenario) }}」档（高亮），
+            便于一眼看清市场波动 / 减产的最坏与基准情形。
+          </p>
+        </div>
 
         <div class="stat-grid">
           <div v-if="scenario.params?.contract_amount !== undefined" class="stat">
@@ -250,6 +319,87 @@ function quote(text) {
 .reason {
   font-size: 13px;
   color: var(--amber-600);
+}
+
+/* ---------- 敏感性区间 ---------- */
+
+.tiers {
+  margin-top: 14px;
+}
+
+.tiers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tiers-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate-700);
+}
+
+.tiers-hint {
+  font-size: 11.5px;
+  color: var(--slate-400);
+}
+
+.tier-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.tier {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--slate-200);
+  background: var(--slate-50);
+}
+
+.tier-current {
+  border-color: var(--blue-400);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px var(--blue-300);
+}
+
+.tier-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--blue-700);
+}
+
+.tier-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tier-key {
+  color: var(--slate-500);
+}
+
+.tier-val {
+  font-weight: 600;
+  color: var(--slate-900);
+  white-space: nowrap;
+}
+
+.tier-val.neg {
+  color: var(--red-600);
+}
+
+.tiers-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--slate-400);
+  line-height: 1.6;
 }
 
 /* ---------- 数值 ---------- */
@@ -501,6 +651,17 @@ function quote(text) {
   color: var(--slate-500);
   line-height: 1.7;
   padding: 0 4px 8px;
+}
+
+.notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: var(--amber-600);
+  font-size: 13px;
+  line-height: 1.75;
 }
 
 @media (max-width: 720px) {

@@ -39,6 +39,11 @@ class SimulationReport(BaseModel):
 
     doc_id: str
     contract_title: str = ""
+    notice: str = Field(
+        default="",
+        description="模拟未完整执行的显式说明（如合同事实缺失导致 computable=false）。"
+        "为空表示所有情景均正常算出了数值",
+    )
     scenarios: list[ScenarioResult] = Field(default_factory=list)
     rulebook_total: int = Field(default=0, description="裁判规则库规模（条）")
     disclaimer: str = ""

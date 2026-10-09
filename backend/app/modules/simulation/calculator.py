@@ -30,6 +30,12 @@ def _step(formula: str, result: float | None) -> dict[str, Any]:
     return {"formula": formula, "result": result}
 
 
+# 价格波动情景的敏感性区间档位（改进 4）
+_PRICE_TIERS_PCT = (20.0, 0.0, -20.0)
+# 自然灾害情景的敏感性区间档位
+_DISASTER_TIERS_PCT = (10.0, 30.0, 50.0)
+
+
 def simulate_price_fluctuation(
     facts: ContractFacts,
     price_change_pct: float,
@@ -38,21 +44,46 @@ def simulate_price_fluctuation(
 
     输入：price_change_pct —— 市场价相对合同价的涨跌幅（% ，正=涨）。
     计算：
-        合同总额 = facts.amount
-        市场价下的交易额 = 合同总额 × (1 + 涨跌幅)
-        偏离额 = 市场价交易额 − 合同总额
+        基准交易额 = 合同总额 facts.amount
+                    （总额缺失、但单价×数量齐备时，用「单价×数量」推算）
+        市场价下的交易额 = 基准交易额 × (1 + 涨跌幅)
+        偏离额 = 市场价交易额 − 基准交易额
         种植方毁约诱因 = 涨幅时贱卖损失（即偏离额）
         收购方毁约诱因 = 跌幅时贵买损失（即偏离额绝对值）
+
+    另输出 tiers：±20% / 0 三档的敏感性区间，一眼看清最坏/基准/最好。
     """
     amount = _amount_value(facts)
-    change = float(price_change_pct) / 100.0
+    quantity = facts.quantity.value if facts.quantity and facts.quantity.value else None
+    unit_price = facts.unit_price.value if facts.unit_price and facts.unit_price.value else None
+
+    derived = False
+    if amount is None and unit_price is not None and quantity is not None:
+        amount = round(unit_price * quantity, 2)
+        derived = True
 
     if amount is None:
         return {
             "computable": False,
-            "reason": "合同未载明金额（facts.amount 为空），无法进行价格损益计算",
+            "reason": "合同未载明金额（facts.amount 为空），且无单价×数量可推算，无法进行价格损益计算",
             "calc_steps": [],
         }
+
+    change = float(price_change_pct) / 100.0
+
+    steps: list[dict[str, Any]] = []
+    if derived:
+        steps.append(_step(f"合同无总额，按单价×数量推算 = {unit_price:,.2f} × {quantity:,.2f}", amount))
+    elif unit_price is not None and quantity is not None:
+        check = round(unit_price * quantity, 2)
+        consistent = abs(check - amount) / amount < 0.02 if amount else False
+        steps.append(
+            _step(
+                f"一致性校验：数量×单价 = {unit_price:,.2f} × {quantity:,.2f} = {check:,.2f}"
+                f"（合同总额 {amount:,.2f}，{'一致' if consistent else '存在偏差，以合同总额为准'}）",
+                check,
+            )
+        )
 
     market_value = amount * (1 + change)
     deviation = market_value - amount
@@ -68,25 +99,59 @@ def simulate_price_fluctuation(
         breach_party = "无明显诱因"
         incentive = 0.0
 
+    steps += [
+        _step(
+            f"基准交易额 = {'单价×数量推算' if derived else '合同总金额'} {amount:,.2f} 元",
+            amount,
+        ),
+        _step(
+            f"市场价下交易额 = {amount:,.2f} × (1 + ({price_change_pct}% / 100))",
+            round(market_value, 2),
+        ),
+        _step(f"偏离额 = {market_value:,.2f} − {amount:,.2f}", round(deviation, 2)),
+        _step(f"毁约诱因金额 = |偏离额|（{breach_party}）", round(incentive, 2)),
+    ]
+
     return {
         "computable": True,
         "params": {"price_change_pct": price_change_pct},
         "contract_amount": amount,
+        "amount_source": "单价×数量推算" if derived else "合同总金额",
         "market_value": round(market_value, 2),
         "deviation": round(deviation, 2),
         "breach_incentive_party": breach_party,
         "breach_incentive_value": round(incentive, 2),
-        "calc_steps": [
-            _step(f"合同总金额 = {amount:,.2f} 元", amount),
-            _step(f"市场价下交易额 = {amount:,.2f} × (1 + ({price_change_pct}% / 100))", round(market_value, 2)),
-            _step(f"偏离额 = {market_value:,.2f} − {amount:,.2f}", round(deviation, 2)),
-            _step(f"毁约诱因金额 = |偏离额|（{breach_party}）", round(incentive, 2)),
-        ],
+        "tiers": [_price_tier(amount, pct) for pct in _PRICE_TIERS_PCT],
+        "calc_steps": steps,
         "summary": (
             f"市场价较合同价{'上涨' if change > 0 else '下跌'} {abs(price_change_pct)}%，"
             f"同等数量下市场交易额为 {_fmt(market_value)} 元，与合同金额偏离 {_fmt(deviation)} 元；"
             f"该价差构成 {breach_party} 的毁约诱因（约 {_fmt(incentive)} 元）。"
         ),
+    }
+
+
+def _price_tier(base_amount: float, pct: float) -> dict[str, Any]:
+    """单个价格敏感性档位的计算。"""
+    change = pct / 100.0
+    market_value = base_amount * (1 + change)
+    deviation = market_value - base_amount
+    if change > 0:
+        party = "种植/供应方"
+        incentive = deviation
+    elif change < 0:
+        party = "收购方"
+        incentive = -deviation
+    else:
+        party = "无明显诱因"
+        incentive = 0.0
+    return {
+        "label": f"{pct:+.0f}%",
+        "pct": pct,
+        "market_value": round(market_value, 2),
+        "deviation": round(deviation, 2),
+        "incentive_party": party,
+        "incentive_value": round(incentive, 2),
     }
 
 
@@ -156,9 +221,28 @@ def simulate_natural_disaster(
         "deliverable_quantity": round(deliverable, 2) if deliverable is not None else None,
         "shortfall_quantity": round(shortfall, 2) if shortfall is not None else None,
         "loss_amount": round(loss_amount, 2) if loss_amount is not None else None,
+        "tiers": _disaster_tiers(facts),
         "calc_steps": steps,
         "summary": summary,
     }
+
+
+def _disaster_tiers(facts: ContractFacts) -> list[dict[str, Any]]:
+    """自然灾害情景的敏感性三档：减产 10% / 30% / 50%。"""
+    tiers: list[dict[str, Any]] = []
+    amount = _amount_value(facts)
+    quantity = facts.quantity.value if facts.quantity and facts.quantity.value else None
+    for pct in _DISASTER_TIERS_PCT:
+        loss = pct / 100.0
+        tier: dict[str, Any] = {"label": f"{pct:.0f}%", "pct": pct}
+        if quantity is not None:
+            deliverable = round(quantity * (1 - loss), 2)
+            tier["deliverable_quantity"] = deliverable
+            tier["shortfall_quantity"] = round(quantity - deliverable, 2)
+        if amount is not None:
+            tier["loss_amount"] = round(amount * loss, 2)
+        tiers.append(tier)
+    return tiers
 
 
 def simulate_party_breach(

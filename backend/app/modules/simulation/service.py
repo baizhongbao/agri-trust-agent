@@ -162,6 +162,7 @@ def run_scenario(
         "penalty_rate",
         "penalty_base",
         "penalty_value",
+        "tiers",
     ):
         if key in calc:
             result.params[key] = calc[key]
@@ -194,7 +195,26 @@ def simulate(
     return SimulationReport(
         doc_id=doc_id,
         contract_title=contract.title,
+        notice=_skipped_notice(contract, results),
         scenarios=results,
         rulebook_total=len(rulebook.load_rules()),
         disclaimer=_DISCLAIMER,
     )
+
+
+def _skipped_notice(contract, results: list[ScenarioResult]) -> str:
+    """情景算不出数值时的显式说明。
+
+    `computable: false` 藏在每个 scenario 里，报告级没提示的话，
+    前端很容易把一张空表展示成“无风险”（L4 门禁的下游半段）。
+    """
+    blocked = [r for r in results if not r.computable]
+    if not blocked:
+        return ""
+    labels = "、".join(r.label or r.scenario for r in blocked)
+    reason = blocked[0].reason or "合同事实缺失"
+    note = f"下列情景未能计算：{labels}。原因：{reason}。"
+    if contract.gate.level != "ok":
+        note += f"合同解析门禁：{contract.gate.summary}。"
+    note += "此处为空表示『算不了』，不表示『无风险』。"
+    return note

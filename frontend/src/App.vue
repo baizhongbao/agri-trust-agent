@@ -144,7 +144,7 @@ async function runSimulation() {
         <div class="tip card card-pad">
           <div class="tip-title">下一步</div>
           <ol>
-            <li>上传一份订单农业合同 PDF</li>
+            <li>上传一份订单农业合同（PDF 或图片）</li>
             <li>查看结构化字段与原文依据</li>
             <li>校验标准、核验企业、推演履约风险</li>
           </ol>
@@ -212,7 +212,7 @@ async function runSimulation() {
         <div v-if="!contract" class="empty card">
           <div class="empty-icon">📄</div>
           <h2>还没有合同</h2>
-          <p>上传一份 PDF 合同开始体验。</p>
+          <p>上传一份 PDF 或图片（JPG/PNG）合同开始体验。</p>
           <p class="empty-hint">
             没有现成文件？运行
             <code>python scripts/make_sample_contract.py</code>

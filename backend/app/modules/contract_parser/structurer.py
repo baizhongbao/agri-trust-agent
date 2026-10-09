@@ -103,15 +103,36 @@ _FIELD_RULES: tuple[FieldRule, ...] = (
 )
 
 _PARTY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("甲方", (r"甲\s*方[（(]?[^)）\n]{0,10}[)）]?[：:\s]*([^\n，。；]{2,40})",)),
-    ("乙方", (r"乙\s*方[（(]?[^)）\n]{0,10}[)）]?[：:\s]*([^\n，。；]{2,40})",)),
-    ("丙方", (r"丙\s*方[（(]?[^)）\n]{0,10}[)）]?[：:\s]*([^\n，。；]{2,40})",)),
+    ("甲方", (r"甲\s*方\s*(?:[（(][^)）\n]{0,12}[)）])?\s*[：:]?(?:单位名称[：:])?([^\n，。；：:]{2,40})",)),
+    ("乙方", (r"乙\s*方\s*(?:[（(][^)）\n]{0,12}[)）])?\s*[：:]?(?:单位名称[：:])?([^\n，。；：:]{2,40})",)),
+    ("丙方", (r"丙\s*方\s*(?:[（(][^)）\n]{0,12}[)）])?\s*[：:]?(?:单位名称[：:])?([^\n，。；：:]{2,40})",)),
+    # 订单农业合同常以「供方/需方」替代「甲方/乙方」——规则顺序放在甲乙之后，
+    # 避免优先捕获正文里的「甲方」等词；同位「需方:单位名称:李姜伟」需逐个冒号截断
+    ("供方", (r"供\s*方\s*(?:[（(][^)）\n]{0,12}[)）])?\s*[：:](?:单位名称[：:])?([^\n，。；：:]{2,40})",)),
+    ("需方", (r"需\s*方\s*(?:[（(][^)）\n]{0,12}[)）])?\s*[：:](?:单位名称[：:])?([^\n，。；：:]{2,40})",)),
 )
 
 # 统一社会信用代码：18 位，字母部分排除 I / O / S / V / Z
 _CREDIT_CODE_RE = re.compile(r"[0-9A-HJ-NP-RT-UW-Y]{18}")
 
+# 信用代码与主体名称的最大关联距离（字符）。超出则视为无法归属，宁可不填也不硬猜。
+# 示例合同里代码紧跟在名称下一行，距离约 15；这里给足 OCR 换行/空白的余量。
+_CREDIT_CODE_MAX_DISTANCE = 120
+
 _CLAUSE_HEAD_RE = re.compile(r"(?m)^\s*(第[一二三四五六七八九十百零〇\d]+条[^\n]*)")
+
+# 直接从标签:值 行流中剥离出的「四处重复的页眉/签名区」噪声（跨页逐页重复捞取）
+# 只匹配签名类标签，不匹配 供方/需方/甲方/乙方——命名行是真实主体信息，不是噪声
+_REPEATED_BLOCK_RE = re.compile(
+    r"^(?:法定代表人或授权代表签字/盖章|法定代表人|法人代表|法人|代表)"
+    r"[（(]?[^)）\n:：]{0,12}[)）]?[：:]\s*\S+$",
+)
+
+# 标签:值 行流关键字段，出现则说明该段是签约页/主体信息区，而非可检索的条款正文
+_HEADER_LINE_RE = re.compile(
+    r"^(?:单位名称|法定代表人|法人代表|法人|法定代表人或授权代表签字/盖章|"
+    r"供方|需方|甲方|乙方|丙方|签订日期|签署日期|签约日期|签订地点)$",
+)
 
 _EDGE_NOISE_RE = re.compile(r"^[\s：:，,。；;、]+|[\s：:，,。；;、]+$")
 _LEADING_VERB_RE = re.compile(r"^(?:为|是|按照|按|采用|执行|应|应当)\s*")
@@ -187,7 +208,56 @@ def _guess_title(text: str) -> str:
     return ""
 
 
-def _extract_parties(text: str) -> list[Party]:
+def _assign_credit_codes(parties: list[Party], text: str) -> list[str]:
+    """按「就近原则」把统一社会信用代码归属到各主体，返回未能归属的代码列表。
+
+    事故背景：原实现用 ``zip(parties, findall(codes))`` 按出现顺序硬配对。
+    当代码出现在主体名称之前、只有一个主体带码、或正文里混入其他 18 位串时，
+    会把甲的代码挂到乙身上，且**静默**污染下游 L1 校验位与 L3 交叉校验——
+    最终给出一个"看起来很确定"的错误结论。
+
+    现在改为：以主体名称在原文中的位置为锚，取距离最近的代码，
+    按距离升序一对一贪心绑定；超出关联窗口的代码宁可不填，也不硬猜。
+    一对一贪心天然处理"代码共用一个区块"的情形——离谁近就归谁。
+    """
+    occurrences = [(m.group(0), m.start()) for m in _CREDIT_CODE_RE.finditer(text)]
+    if not occurrences or not parties:
+        return [code for code, _ in occurrences]
+
+    anchors: list[list[int]] = []
+    for party in parties:
+        positions = (
+            [m.start() for m in re.finditer(re.escape(party.name), text)]
+            if party.name
+            else []
+        )
+        anchors.append(positions)
+
+    candidates: list[tuple[int, int, int]] = []
+    for party_index, positions in enumerate(anchors):
+        if not positions:
+            continue
+        for code_index, (_, code_pos) in enumerate(occurrences):
+            distance = min(abs(code_pos - pos) for pos in positions)
+            candidates.append((distance, party_index, code_index))
+    candidates.sort()
+
+    assigned_parties: set[int] = set()
+    used_codes: set[int] = set()
+    for distance, party_index, code_index in candidates:
+        if distance > _CREDIT_CODE_MAX_DISTANCE:
+            continue
+        if party_index in assigned_parties or code_index in used_codes:
+            continue
+        parties[party_index].credit_code = occurrences[code_index][0]
+        assigned_parties.add(party_index)
+        used_codes.add(code_index)
+
+    return [code for i, (code, _) in enumerate(occurrences) if i not in used_codes]
+
+
+def _extract_parties(text: str) -> tuple[list[Party], list[str]]:
+    """抽取合同主体，并把信用代码按就近原则归属。返回 (主体列表, 未归属代码列表)。"""
     parties: list[Party] = []
     for role, patterns in _PARTY_RULES:
         for pattern in patterns:
@@ -196,14 +266,23 @@ def _extract_parties(text: str) -> list[Party]:
                 name = match.group(1).strip()
                 # 过滤掉"（以下简称…）"这类噪音
                 name = re.sub(r"[（(].*?[)）]", "", name).strip()
-                if name:
+                # 剥离「单位名称:」标签本身（正则已用非捕获组绕开，此处兜底）
+                name = re.sub(r"^(?:单位名称)\s*[：:]?", "", name).strip()
+                # 截掉姓名后粘连的后续段落：标签:值 模式的合同同行常附带其他字段
+                name = re.split(
+                    r"\s+(?:法定代表|委托代理|法人代表|开户|账号|联系|地址|电话)", name
+                )[0].strip()
+                # 主体名比字段值短得多（自然人 2~3 字），不能用 _quality_ok 的 len>=4 门槛
+                if (
+                    len(name) >= 2
+                    and name[0] not in _BAD_LEADING_CHARS
+                    and re.search(r"[\u4e00-\u9fa5]", name)
+                ):
                     parties.append(Party(role=role, name=name))
-                break
+                    break
 
-    codes = _CREDIT_CODE_RE.findall(text)
-    for party, code in zip(parties, codes):
-        party.credit_code = code
-    return parties
+    unmatched_codes = _assign_credit_codes(parties, text)
+    return parties, unmatched_codes
 
 
 def split_clauses(text: str) -> list[Clause]:
@@ -220,11 +299,7 @@ def split_clauses(text: str) -> list[Clause]:
     heads = list(_CLAUSE_HEAD_RE.finditer(text))
 
     if not heads:
-        blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
-        return [
-            Clause(index=i + 1, title="", content=block[:2000])
-            for i, block in enumerate(blocks[:40])
-        ]
+        return _split_without_heads(text)
 
     clauses: list[Clause] = []
 
@@ -239,6 +314,76 @@ def split_clauses(text: str) -> list[Clause]:
         title = re.split(r"[：:，。,、\s]", header, maxsplit=1)[0][:40]
         clauses.append(Clause(index=i + 1, title=title, content=block[:3000]))
     return clauses
+
+
+def _split_without_heads(text: str) -> list[Clause]:
+    """合同没有「第X条」标题时的兜底切分。
+
+    至少分为「首部（主体/编号区）」与「后续正文」两段，保证下游
+    始终有可检索的片段，而不是把整份合同揉成一条。
+
+    注意：合同的**签字盖章页**往往在每页页眉/页脚重复出现（「法定代表人或
+    授权代表签字/盖章」「法人代表」等逐页捞取），必须过滤，否则整页签名区
+    会被当成一条正文条款。
+    """
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    # 第一段：所有纯头部标签行（单位名称/甲方/法定代表人…及其值）连续出现的部分
+    head_end = 0
+    while head_end < len(lines) and _HEADER_LINE_RE.match(lines[head_end].strip()):
+        head_end += 1
+    # 把夹在中间、以非关键字开头的行也并入主体块：它们通常是「地址/联系人」的换行
+    while head_end < len(lines) and not _HEADER_LINE_RE.match(lines[head_end].strip()):
+        head_end += 1
+    header_lines = lines[:head_end]
+    body_lines = lines[head_end:]
+
+    clauses: list[Clause] = []
+
+    # 首部：过滤掉重复的「法人代表/签字盖章」噪声后仍保留关键信息
+    cleaned = _strip_signature_noise("\n".join(header_lines), keep_first=True)
+    if cleaned:
+        clauses.append(Clause(index=0, title="合同首部", content=cleaned[:3000]))
+
+    # 正文块：按空行分组，再去做签名噪声清洗
+    for block in re.split(r"\n\s*\n", "\n".join(body_lines)):
+        block = block.strip()
+        if not block:
+            continue
+        cleaned = _strip_signature_noise(block)
+        if cleaned:
+            clauses.append(
+                Clause(index=len(clauses), title="", content=cleaned[:2000])
+            )
+    return clauses
+
+
+def _strip_signature_noise(block: str, keep_first: bool = False) -> str:
+    """剥离「法人代表:李姜伟」「签字/盖章:谭小东」这类签名/页眉噪声行。
+
+    keep_first=True 时保留首个签名行——项目要求「抽取值必须带证据」，
+    主体区里的签名行本身也是合同原文的一部分（尤其首部需要保留签字痕迹）。
+    """
+    out: list[str] = []
+    skip_next_repeat = False
+    for ln in block.splitlines():
+        line = ln.strip()
+        if not line:
+            continue
+        if _REPEATED_BLOCK_RE.match(line):
+            if keep_first and not skip_next_repeat:
+                skip_next_repeat = True
+                out.append(line)
+            continue
+        out.append(line)
+    cleaned = "\n".join(out).strip()
+    # 该块几乎全部是签名行（超过 7 成）时，直接视为无正文
+    if not cleaned:
+        return ""
+    # 首部模式：只判断纯噪声块，保留签名首行后其余皆可入
+    return cleaned[:2000]
 
 
 class RuleBasedStructurer:
@@ -264,7 +409,13 @@ class RuleBasedStructurer:
             return contract
 
         contract.title = _guess_title(text)
-        contract.parties = _extract_parties(text)
+        contract.parties, unmatched_codes = _extract_parties(text)
+        if unmatched_codes:
+            contract.warnings.append(
+                "以下统一社会信用代码未能归属到具体主体（名称与代码距离过远或数量不匹配）："
+                + "、".join(unmatched_codes)
+                + "。企业核验将主要按主体名称查询，建议人工核对。"
+            )
 
         fields: list[ContractField] = []
         for rule in _FIELD_RULES:

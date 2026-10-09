@@ -35,6 +35,7 @@ from app.core.providers.ocr import (
     HuaweiOCRProvider,
 )
 from app.core.providers.rerank import CloudRerankProvider, DisabledRerankProvider
+from app.core.providers.search import DisabledSearchProvider, TavilySearchProvider
 
 _LLM: dict[str, Callable[[], LLMProvider]] = {
     "pangu": PanguLLMProvider,
@@ -61,6 +62,11 @@ _RERANK: dict[str, Callable[[], RerankProvider]] = {
 _ENTERPRISE: dict[str, Callable[[], EnterpriseProvider]] = {
     "fixture": FixtureEnterpriseProvider,
     "qcc": QccEnterpriseProvider,
+}
+
+_SEARCH: dict[str, Callable[[], SearchProvider]] = {
+    "tavily": TavilySearchProvider,
+    "disabled": DisabledSearchProvider,
 }
 
 
@@ -98,6 +104,12 @@ def get_enterprise_provider() -> EnterpriseProvider:
     return _pick(_ENTERPRISE, key, "ENTERPRISE_API_PROVIDER")
 
 
+@lru_cache(maxsize=1)
+def get_search_provider() -> SearchProvider:
+    key = (settings.search_provider or "").strip().lower() or "disabled"
+    return _pick(_SEARCH, key, "SEARCH_PROVIDER")
+
+
 def require(provider: Any, purpose: str) -> None:
     """断言提供者就绪，否则抛出可读的错误。
 
@@ -119,6 +131,7 @@ def describe_providers() -> dict[str, dict[str, Any]]:
         "embedding": get_embedding_provider().describe(),
         "rerank": get_rerank_provider().describe(),
         "enterprise": get_enterprise_provider().describe(),
+        "search": get_search_provider().describe(),
     }
 
 
@@ -129,3 +142,4 @@ def reset_cache() -> None:
     get_embedding_provider.cache_clear()
     get_rerank_provider.cache_clear()
     get_enterprise_provider.cache_clear()
+    get_search_provider.cache_clear()

@@ -28,6 +28,59 @@ class Clause(BaseModel):
     content: str = ""
 
 
+# ============================================================
+#  解析质量门禁（L4）
+#
+#  等级语义：
+#    blocked  —— 主体缺失 / 无文本。下游结论不可信，必须显式拒绝或标注，
+#                绝不允许静默跳过（例如企业核验拿到空主体后返回一份
+#                "summary 全 0" 的报告，会被读成"已核验、无风险"）
+#    degraded —— 个别必备字段缺失。下游可继续，但必须携带该标注
+#    ok       —— 必备字段齐备
+# ============================================================
+
+GATE_OK = "ok"
+GATE_DEGRADED = "degraded"
+GATE_BLOCKED = "blocked"
+
+
+class GateFailure(BaseModel):
+    """一条门禁未通过项。"""
+
+    key: str
+    label: str
+    severity: str = Field(default="degraded", description="blocking 阻断 | degraded 降级")
+    detail: str = ""
+
+
+class ParseGate(BaseModel):
+    """解析质量门禁结果，随解析结果一同落盘。
+
+    它与 `warnings` 的分工：`warnings` 是给人看的自由文本流水，
+    `gate` 是给程序判断的结构化结论——下游据此决定"能不能继续算"。
+    """
+
+    level: str = Field(default=GATE_OK, description="ok | degraded | blocked")
+    failures: list[GateFailure] = Field(default_factory=list)
+    summary: str = Field(default="", description="一句话结论，可直接展示")
+
+    # ---- L1 → L2 升级痕迹：必须留档，否则"为什么这份用 LLM 抽的"无从追溯 ----
+    escalated: bool = False
+    escalation_reason: str = ""
+    escalation_outcome: str = Field(
+        default="",
+        description="adopted 采纳 L2 | rejected L2 更差已丢弃 | unavailable L2 不可用 | skipped 已跳过",
+    )
+    escalation_note: str = ""
+
+    @property
+    def blocked(self) -> bool:
+        return self.level == GATE_BLOCKED
+
+    def missing_labels(self) -> list[str]:
+        return [f.label for f in self.failures]
+
+
 class ContractField(BaseModel):
     """单个抽取字段及其依据。"""
 
@@ -165,6 +218,8 @@ class StructuredContract(BaseModel):
     extractor: str = "unknown"
     used_ocr: bool = False
     warnings: list[str] = Field(default_factory=list)
+    # 解析质量门禁：必备字段是否齐备 + L1→L2 升级痕迹（见 gate.py）
+    gate: ParseGate = Field(default_factory=ParseGate)
     raw_text_preview: str = ""
 
     def field_map(self) -> dict[str, str]:

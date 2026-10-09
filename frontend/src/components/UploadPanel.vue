@@ -34,7 +34,7 @@ function onDrop(event) {
   <div class="card card-pad upload-card">
     <div class="title">
       <h3>上传合同</h3>
-      <span class="tag tag-slate">PDF</span>
+      <span class="tag tag-slate">PDF / 图片</span>
     </div>
 
     <div
@@ -51,21 +51,21 @@ function onDrop(event) {
       </template>
       <template v-else>
         <div class="drop-icon">⬆</div>
-        <p class="drop-main">点击选择，或拖拽 PDF 到此处</p>
-        <p class="hint">支持电子版与扫描件（扫描件需配置 OCR）</p>
+        <p class="drop-main">点击选择，或拖拽 PDF / 图片到此处</p>
+        <p class="hint">支持电子版、扫描件与 JPG / PNG 照片（扫描件与图片需配置 OCR）</p>
       </template>
     </div>
 
     <input
       ref="fileInput"
       type="file"
-      accept="application/pdf,.pdf"
+      accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg"
       class="hidden-input"
       @change="onChange"
     />
 
     <p class="footnote">
-      当前仅支持 PDF。文件保存于 <code>data/contracts/</code>，不会外传。
+      支持 PDF 与图片（JPG/PNG）。文件保存于 <code>data/contracts/</code>，不会外传。
     </p>
   </div>
 </template>

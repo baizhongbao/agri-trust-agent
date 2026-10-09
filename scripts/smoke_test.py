@@ -122,6 +122,15 @@ def main() -> int:
 
     print(f"\n事实溯源：{len(facts.evidences)} 项带原文依据")
 
+    # 解析质量门禁（L4）：必备字段缺失必须显式报出，不能只看"抽到几个字段"
+    gate_info = contract.gate
+    print(f"\n解析门禁：{gate_info.level.upper()} —— {gate_info.summary}")
+    if gate_info.escalated:
+        print(f"  L1→L2 升级：触发【{gate_info.escalation_reason}】→ {gate_info.escalation_outcome}")
+        print(f"    {gate_info.escalation_note}")
+    for failure in gate_info.failures:
+        print(f"  [缺/{failure.severity}] {failure.label}：{failure.detail}")
+
     print(f"\n条款切分：共 {len(contract.clauses)} 条")
     for clause in contract.clauses[:3]:
         preview = clause.content.replace("\n", " ")[:60]
@@ -135,7 +144,16 @@ def main() -> int:
     print("-" * 62)
     saved = settings.data_dir / "contracts" / f"{doc_id}.json"
     print(f"结果已落盘：{saved}")
-    print("冒烟测试通过" if hit else "冒烟测试未抽到任何字段，请检查数据或规则")
+    if not hit:
+        print("冒烟测试未抽到任何字段，请检查数据或规则")
+        return 1
+    if gate_info.level == "blocked":
+        print("冒烟测试未通过：解析门禁 blocked，必备字段缺失（见上）")
+        return 1
+    if gate_info.level == "degraded":
+        print("冒烟测试通过（降级）：字段已抽出，但有关键要素缺失，下游结论需附带标注")
+        return 0
+    print("冒烟测试通过")
     return 0
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -33,7 +34,15 @@ def _safe_name(filename: str) -> str:
 
 
 def new_doc_id() -> str:
-    return datetime.now().strftime("%Y%m%d%H%M%S")
+    """生成文档 ID，形如 ``20261007153000123456-a3f1``。
+
+    纯秒级时间戳（``%Y%m%d%H%M%S``）在同一秒上传两份合同时会撞车，
+    后者直接覆盖前者（docs/下一步必做事项.md 已记录该复现）。
+    时间戳在前的字典序仍等价于时间序（``list_contracts`` 依赖倒排取最近），
+    微秒精度 + 短随机后缀保证同一时刻唯一。
+    """
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    return f"{stamp}-{secrets.token_hex(2)}"
 
 
 def save_contract(

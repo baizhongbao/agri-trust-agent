@@ -51,6 +51,7 @@ def _to_model(info: RegistrationInfo) -> RegistrationInfoModel:
         status=info.status,
         business_scope=info.business_scope,
         address=info.address,
+        violations=info.violations,
         raw=info.raw,
     )
 
@@ -139,10 +140,38 @@ def verify_contract(
         doc_id=doc_id,
         contract_title=contract.title,
         provider=provider.name,
+        notice=_skipped_notice(contract, parties),
         parties=parties,
         summary=summary,
         disclaimer=_DISCLAIMER.get(provider.name, _DISCLAIMER["fixture"]),
     )
+
+
+def _skipped_notice(
+    contract,
+    parties: list[PartyVerification],
+) -> str:
+    """当核验无法逐项跑完时，给出一句不能误读的说明。
+
+    没有主体时**不返回空报告了事**：那样的 summary 全 0 会被读成
+    “已核验、无风险”，而事实是一次工商查询都没发出（L4 门禁的下游半段）。
+    """
+    if not parties:
+        return (
+            "合同解析未识别到任何主体，企业核验（L1 信用代码校验 / L2 工商查询 / "
+            "L3 交叉校验）全部未执行；下面的 summary 全 0 表示『没查』，"
+            "不表示『没问题』。请先修复合同主体抽取或人工补录主体后重跑。"
+        )
+    missing_code = [p for p in parties if not p.credit_code]
+    if missing_code:
+        roles = "、".join(p.role for p in missing_code)
+        note = f"{roles}未载明统一社会信用代码，仅按名称查询，未经 L1 校验位验算。"
+        if contract.gate.level != "ok":
+            note += f"合同解析门禁：{contract.gate.summary}。"
+        return note
+    if contract.gate.level != "ok":
+        return f"合同解析门禁未通过，核验依据的字段可能存在缺失：{contract.gate.summary}。"
+    return ""
 
 
 def lookup(

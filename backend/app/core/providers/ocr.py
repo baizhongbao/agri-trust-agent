@@ -50,7 +50,10 @@ class CloudOCRProvider(OCRProvider):
                 "云端 OCR 未就绪：需配置 CLOUD_API_KEY 与 OCR_CLOUD_MODEL"
             )
 
+        # 按魔数决定 data URL 的 MIME：直接上传的图片可能是 JPEG，
+        # 声明错 MIME 部分服务端会拒收
         b64 = base64.b64encode(image_bytes).decode("ascii")
+        mime = "image/png" if image_bytes.startswith(b"\x89PNG") else "image/jpeg"
         payload = {
             "model": settings.ocr_cloud_model,
             "messages": [
@@ -59,7 +62,7 @@ class CloudOCRProvider(OCRProvider):
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64}"},
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
                         },
                         {"type": "text", "text": _OCR_PROMPT},
                     ],

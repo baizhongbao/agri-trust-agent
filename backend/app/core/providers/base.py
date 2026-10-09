@@ -76,6 +76,9 @@ class RegistrationInfo:
 
     字段缺失时留空——提供者不得用推测值填充，
     与「抽取值必须带证据」是同一条纪律。
+
+    `violations`：违法/风险事项列表，None 表示调用方未提供该项信息（未核查），
+    空列表表示已核查且无记录——两者在风险判定上是不同的（见 cross_check）。
     """
 
     name: str = ""
@@ -86,6 +89,7 @@ class RegistrationInfo:
     status: str = ""
     business_scope: str = ""
     address: str = ""
+    violations: list[str] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -101,6 +105,26 @@ class EnterpriseLookupResult:
     registration: RegistrationInfo | None = None
     note: str = ""
     provider: str = "unknown"
+
+
+@dataclass
+class SearchResultItem:
+    """单条联网搜索结果（作为外部证据进入 Agent 报告）。"""
+
+    title: str = ""
+    url: str = ""
+    snippet: str = ""
+    score: float | None = None
+
+
+@dataclass
+class SearchResult:
+    """联网搜索结果。"""
+
+    query: str = ""
+    items: list[SearchResultItem] = field(default_factory=list)
+    provider: str = "unknown"
+    note: str = field(default="", metadata={"description": "降级或错误时的人类可读说明"})
 
 
 class OCRProvider(ABC):
@@ -222,6 +246,32 @@ class EnterpriseProvider(ABC):
     @abstractmethod
     def lookup(self, search_key: str) -> EnterpriseLookupResult:
         """按企业名称或统一社会信用代码查询工商登记信息。"""
+
+    def describe(self) -> dict[str, Any]:
+        return {"name": self.name, "ready": self.is_ready()}
+
+
+class SearchProvider(ABC):
+    """联网搜索提供者（Agent 加深时获取外部证据）。
+
+    `tavily`（真实联网）与 `disabled`（离线降级）共用本接口，
+    断网演示时切成 disabled 即自动降级，不伪造结果。
+    """
+
+    name: str = "base"
+
+    @abstractmethod
+    def is_ready(self) -> bool:
+        """是否具备调用条件。"""
+
+    @abstractmethod
+    def search(
+        self,
+        query: str,
+        max_results: int | None = None,
+        topic: str = "general",
+    ) -> SearchResult:
+        """按关键词搜索网页，返回条目（含标题 / URL / 摘要）。"""
 
     def describe(self) -> dict[str, Any]:
         return {"name": self.name, "ready": self.is_ready()}

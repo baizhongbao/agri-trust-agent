@@ -34,6 +34,12 @@ huaweicloudsdkocr
 # ---- 结构化输出校验 ----
 jsonschema
 
+# ---- Agent 接入：MCP Server（stdio）----
+# 参赛资格线。backend/app/mcp/agri_server.py 把四个模块包成 MCP 工具，
+# 由 AgentArts / Claude Desktop / OpenCode 等 MCP 客户端直接调用。
+# 与 OpenCode 的 tavily 插件共用同一把 key，但服务端只从 .env 读，不读用户目录配置。
+mcp>=1.9.0
+
 # ---- 开发与测试 ----
 pytest
 pytest-asyncio

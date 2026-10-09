@@ -22,6 +22,8 @@ const statusMeta = {
   review: { label: '待核对', cls: 'tag-slate' },
 }
 
+const GSXT_URL = 'https://www.gsxt.gov.cn'
+
 function statusLabel(status) {
   return statusMeta[status]?.label || status
 }
@@ -81,6 +83,14 @@ async function runLookup() {
           <span class="metric-label">{{ statusLabel(status) }}</span>
         </div>
       </div>
+    </div>
+
+    <!-- 核验未完整执行时必须说清，否则上面那排 0 会被读成“无风险” -->
+    <div v-if="report.notice" class="card card-pad notice-card">
+      <div class="notice-head">
+        <span class="tag tag-amber">核验未完整执行</span>
+      </div>
+      <p>{{ report.notice }}</p>
     </div>
 
     <div
@@ -159,6 +169,24 @@ async function runLookup() {
           <div class="reg-item wide">
             <dt>住所</dt>
             <dd>{{ party.l2.address || '—' }}</dd>
+          </div>
+          <div class="reg-item wide">
+            <dt>违法与经营风险</dt>
+            <dd>
+              <template v-if="party.l2.violations === null || party.l2.violations === undefined">
+                <span class="hint">数据源未核查</span>
+                <p class="nudge">
+                  违法/风险记录需人工核验，可前往官方渠道查询：
+                  <a :href="GSXT_URL" target="_blank" rel="noopener">国家企业信用信息公示系统</a>
+                </p>
+              </template>
+              <template v-else-if="!party.l2.violations.length">
+                <span class="ok-text">未查到违法/风险记录</span>
+              </template>
+              <ul v-else class="violations">
+                <li v-for="(v, i) in party.l2.violations" :key="i">{{ v }}</li>
+              </ul>
+            </dd>
           </div>
         </dl>
       </div>
@@ -255,6 +283,24 @@ async function runLookup() {
           <div class="reg-item wide">
             <dt>经营范围</dt>
             <dd>{{ lookupResult.l2.business_scope || '—' }}</dd>
+          </div>
+          <div class="reg-item wide">
+            <dt>违法与经营风险</dt>
+            <dd>
+              <template v-if="lookupResult.l2.violations === null || lookupResult.l2.violations === undefined">
+                <span class="hint">数据源未核查</span>
+                <p class="nudge">
+                  违法/风险记录需人工核验，可前往官方渠道查询：
+                  <a :href="GSXT_URL" target="_blank" rel="noopener">国家企业信用信息公示系统</a>
+                </p>
+              </template>
+              <template v-else-if="!lookupResult.l2.violations.length">
+                <span class="ok-text">未查到违法/风险记录</span>
+              </template>
+              <ul v-else class="violations">
+                <li v-for="(v, i) in lookupResult.l2.violations" :key="i">{{ v }}</li>
+              </ul>
+            </dd>
           </div>
         </dl>
         <p v-if="lookupResult.l2_note" class="note">{{ lookupResult.l2_note }}</p>
@@ -505,6 +551,57 @@ async function runLookup() {
   font-size: 12px;
 }
 
+.violations {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 0;
+}
+
+.violations li {
+  font-size: 12.5px;
+  color: var(--red-600);
+  line-height: 1.6;
+  padding-left: 12px;
+  position: relative;
+}
+
+.violations li::before {
+  content: '•';
+  position: absolute;
+  left: 2px;
+  color: var(--red-500);
+}
+
+.ok-text {
+  color: var(--green-700);
+  font-size: 12.5px;
+}
+
+.hint {
+  color: var(--amber-600);
+  font-size: 12.5px;
+}
+
+.nudge {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--slate-500);
+  line-height: 1.7;
+}
+
+.nudge a {
+  color: var(--blue-600);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--blue-400);
+}
+
+.nudge a:hover {
+  color: var(--blue-700);
+  border-bottom-style: solid;
+}
+
 /* ---------- 依据 ---------- */
 
 .evidence {
@@ -538,6 +635,18 @@ async function runLookup() {
 
 .lookup-result {
   margin-top: 14px;
+}
+
+.notice-card {
+  background: #fffbeb;
+  border-color: #fde68a;
+  font-size: 13px;
+  color: var(--amber-600);
+  line-height: 1.75;
+}
+
+.notice-head {
+  margin-bottom: 6px;
 }
 
 .disclaimer {

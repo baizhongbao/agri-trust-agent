@@ -60,6 +60,12 @@ models/
 *.swp
 *.swo
 
+# ---- Agent 工具链本地配置 ----
+# MCP 客户端接入配置（含本机绝对路径，逐人不同）+ 插件原始输出
+.pi/
+.codebuddy/
+.tavily/
+
 # ---- 操作系统 ----
 .DS_Store
 Thumbs.db

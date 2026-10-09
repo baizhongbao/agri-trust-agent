@@ -59,6 +59,45 @@ def test_price_missing_amount_not_computable() -> None:
     assert "金额" in result["reason"]
 
 
+def test_price_derived_from_unit_price_times_quantity() -> None:
+    """合同无总额、但有单价×数量时，应能推算基准交易额并继续计算。"""
+    facts = ContractFacts(
+        amount=Money(value=None),
+        unit_price=Money(value=2700.0, raw="2700元/吨"),
+        quantity=Quantity(name="稻谷", value=180.0, unit="吨"),
+    )
+    result = calculator.simulate_price_fluctuation(facts, price_change_pct=10.0)
+    assert result["computable"]
+    assert result["contract_amount"] == 486000.0  # 2700 × 180
+    assert result["amount_source"] == "单价×数量推算"
+    assert result["market_value"] == 534600.0
+    assert result["deviation"] == 48600.0
+    assert any("单价×数量" in s["formula"] for s in result["calc_steps"])
+
+
+def test_price_consistency_step_when_amount_and_unit_price_both_present() -> None:
+    """总额与单价×数量同时存在时，输出一致性校验步骤。"""
+    facts = ContractFacts(
+        amount=Money(value=486000.0),
+        unit_price=Money(value=2700.0),
+        quantity=Quantity(name="稻谷", value=180.0, unit="吨"),
+    )
+    result = calculator.simulate_price_fluctuation(facts, price_change_pct=5.0)
+    assert any("一致性校验" in s["formula"] for s in result["calc_steps"])
+
+
+def test_price_tiers_present() -> None:
+    result = calculator.simulate_price_fluctuation(FACTS, price_change_pct=20.0)
+    tiers = result["tiers"]
+    assert len(tiers) == 3
+    assert tiers[0]["pct"] == 20.0 and tiers[0]["market_value"] == 583200.0
+    assert tiers[1]["pct"] == 0.0 and tiers[1]["deviation"] == 0.0
+    assert tiers[2]["pct"] == -20.0 and tiers[2]["market_value"] == 388800.0
+    # 上涨档是供应方诱因，下跌档是收购方诱因
+    assert "供应方" in tiers[0]["incentive_party"]
+    assert "收购方" in tiers[2]["incentive_party"]
+
+
 # ---------------- 数值计算：自然灾害 ----------------
 
 
@@ -81,6 +120,16 @@ def test_disaster_ratio_is_clamped() -> None:
 def test_disaster_missing_all_not_computable() -> None:
     result = calculator.simulate_natural_disaster(ContractFacts(), loss_ratio_pct=30.0)
     assert not result["computable"]
+
+
+def test_disaster_tiers_present() -> None:
+    result = calculator.simulate_natural_disaster(FACTS, loss_ratio_pct=30.0)
+    tiers = result["tiers"]
+    assert len(tiers) == 3
+    assert tiers[0]["label"] == "10%" and tiers[0]["loss_amount"] == 48600.0
+    assert tiers[0]["shortfall_quantity"] == 18.0  # 180×10%
+    assert tiers[1]["loss_amount"] == 145800.0  # 30%
+    assert tiers[2]["loss_amount"] == 243000.0  # 50%
 
 
 # ---------------- 数值计算：一方违约 ----------------
@@ -212,3 +261,33 @@ def test_service_unknown_scenario_raises(monkeypatch) -> None:
 def test_service_missing_contract_returns_none(monkeypatch) -> None:
     monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: None)
     assert service.simulate("no-such-doc", llm=_MockLLM()) is None
+
+
+# ---------------- L4 门禁的下游半段：算不了数必须说明 ----------------
+
+
+def test_service_notice_when_amount_missing(monkeypatch) -> None:
+    """事故回归：facts.amount 为空 → computable=false。
+
+    旧的返回里只有每个 scenario 的 reason，报告级没有任何提示，
+    前端很容易把空表展示成「无风险」。
+    """
+    contract = _contract(ContractFacts())
+    monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: contract)
+
+    report = service.simulate("test-doc", scenarios=["price_fluctuation"], llm=_MockLLM())
+
+    assert report.scenarios[0].computable is False
+    assert report.notice, "算不了数时报告级必须给出说明"
+    assert "算不了" in report.notice
+    assert "不表示" in report.notice
+
+
+def test_service_notice_empty_when_all_computable(monkeypatch) -> None:
+    contract = _contract()
+    monkeypatch.setattr(service.contract_service, "get_contract", lambda doc_id: contract)
+
+    report = service.simulate("test-doc", llm=_MockLLM())
+
+    assert all(s.computable for s in report.scenarios)
+    assert report.notice == ""

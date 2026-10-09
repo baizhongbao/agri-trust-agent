@@ -40,6 +40,10 @@ class RegistrationInfo(BaseModel):
     status: str = Field(default="", description="登记状态，如 存续 / 开业 / 注销")
     business_scope: str = ""
     address: str = ""
+    violations: list[str] | None = Field(
+        default=None,
+        description="违法/风险事项；None 表示数据源未核查（区别于『已核查且无记录』的空列表）",
+    )
     raw: dict = Field(default_factory=dict, description="接口原始返回（供追溯）")
 
 
@@ -67,6 +71,11 @@ class VerifyReport(BaseModel):
     doc_id: str
     contract_title: str = ""
     provider: str = Field(default="", description="工商数据来源：fixture | qcc")
+    notice: str = Field(
+        default="",
+        description="核验未完整执行的显式说明。为空表示逐项核验已跑完；"
+        "非空时不得把 summary 全 0 读成『已核验、无风险』",
+    )
     parties: list[PartyVerification] = Field(default_factory=list)
     summary: dict = Field(default_factory=dict, description="各综合判定的主体数量")
     disclaimer: str = ""
