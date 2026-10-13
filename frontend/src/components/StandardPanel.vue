@@ -8,6 +8,8 @@ const props = defineProps({
 const results = computed(() => props.report.results || [])
 const unmatched = computed(() => props.report.unmatched_clauses || [])
 const index = computed(() => props.report.index || {})
+const required = computed(() => props.report.required_clauses || null)
+const compliance = computed(() => props.report.compliance || null)
 
 const coveragePercent = computed(() => Math.round((props.report.coverage || 0) * 100))
 
@@ -19,6 +21,25 @@ function scoreClass(score) {
   if (score >= 0.5) return 'high'
   if (score >= 0.3) return 'mid'
   return 'low'
+}
+
+const RISK_LABEL = { high: '高风险', medium: '中风险', low: '低风险' }
+function riskLabel(risk) {
+  return RISK_LABEL[risk] || '需关注'
+}
+
+function riskTagClass(risk) {
+  if (risk === 'high') return 'tag-red'
+  if (risk === 'medium') return 'tag-amber'
+  return 'tag-slate'
+}
+
+function vulnTagClass(severity) {
+  return severity === 'high' ? 'tag-red' : 'tag-amber'
+}
+
+function fmtValue(value, unit) {
+  return value === null || value === undefined ? '—' : `${value}${unit || ''}`
 }
 </script>
 
@@ -55,6 +76,139 @@ function scoreClass(score) {
           <span class="metric-label">未匹配条款</span>
         </div>
       </div>
+    </div>
+
+    <div v-if="required" class="card card-pad">
+      <div class="head">
+        <div>
+          <h2>必备条款覆盖</h2>
+          <p class="sub">{{ required.summary }}</p>
+        </div>
+        <span class="tag" :class="required.risk_level === '低风险' ? 'tag-green' : 'tag-amber'">
+          {{ required.risk_level }}
+        </span>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <span class="metric-value">
+            {{ required.required_covered }}<small>/{{ required.required_total }}</small>
+          </span>
+          <span class="metric-label">必备条款已覆盖</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ (required.missing_required || []).length }}</span>
+          <span class="metric-label">缺失必备条款</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ (required.missing_recommended || []).length }}</span>
+          <span class="metric-label">缺失建议条款</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ required.risk_score }}</span>
+          <span class="metric-label">条款风险分</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="required && (required.missing_required || []).length" class="card card-pad warn">
+      <h3>缺失的必备条款（必须补）</h3>
+      <ul class="missing">
+        <li v-for="item in required.missing_required" :key="item.key">
+          <div class="missing-head">
+            <strong>{{ item.name }}</strong>
+            <span class="tag" :class="riskTagClass(item.risk)">{{ riskLabel(item.risk) }}</span>
+          </div>
+          <p v-if="item.advice" class="missing-advice">{{ item.advice }}</p>
+          <p v-if="item.source" class="missing-src">依据：{{ item.source }}</p>
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="required && (required.missing_recommended || []).length" class="card card-pad">
+      <h3 class="block-title">缺失的建议条款（可选补）</h3>
+      <ul class="missing">
+        <li v-for="item in required.missing_recommended" :key="item.key">
+          <div class="missing-head">
+            <strong>{{ item.name }}</strong>
+            <span class="tag tag-slate">建议</span>
+          </div>
+          <p v-if="item.advice" class="missing-advice">{{ item.advice }}</p>
+          <p v-if="item.source" class="missing-src">依据：{{ item.source }}</p>
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="compliance" class="card card-pad">
+      <div class="head">
+        <div>
+          <h2>数值合规比对</h2>
+          <p class="sub">{{ compliance.summary }}</p>
+        </div>
+        <span
+          v-if="compliance.mandatory_violation_count"
+          class="tag tag-red"
+        >
+          违反强制 {{ compliance.mandatory_violation_count }}
+        </span>
+        <span v-else-if="compliance.violation_count" class="tag tag-amber">存在偏离</span>
+        <span v-else class="tag tag-green">未发现偏离</span>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <span class="metric-value">{{ compliance.total }}</span>
+          <span class="metric-label">可比对指标</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ compliance.violation_count }}</span>
+          <span class="metric-label">偏离依据</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ compliance.mandatory_violation_count }}</span>
+          <span class="metric-label">违反强制性</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">{{ compliance.review_count }}</span>
+          <span class="metric-label">待人工核对</span>
+        </div>
+      </div>
+
+      <div v-if="(compliance.violations || []).length" class="matches">
+        <div v-for="(item, i) in compliance.violations" :key="i" class="match">
+          <div class="match-head">
+            <span class="match-code mono">{{ item.standard_code }}</span>
+            <span class="match-standard">{{ item.standard_title }}</span>
+            <span class="match-clause">{{ item.clause_no }} {{ item.clause_title }}</span>
+            <span class="tag" :class="vulnTagClass(item.severity)">{{ item.basis }}</span>
+          </div>
+          <p class="cmp">
+            <span class="cmp-label">合同约定</span>
+            <span class="cmp-val">
+              {{ item.contract_metric }} {{ item.contract_op }} {{ fmtValue(item.contract_value, item.contract_unit) }}
+            </span>
+            <span class="cmp-vs">vs</span>
+            <span class="cmp-label">依据限值</span>
+            <span class="cmp-val">
+              {{ item.metric }} {{ item.standard_op }} {{ fmtValue(item.standard_value, item.standard_unit) }}
+            </span>
+          </p>
+          <p v-if="item.reason" class="match-text">{{ item.reason }}</p>
+        </div>
+      </div>
+
+      <div v-if="(compliance.reviews || []).length" class="matches">
+        <div v-for="(item, i) in compliance.reviews" :key="`r${i}`" class="match">
+          <div class="match-head">
+            <span class="match-code mono">{{ item.standard_code }}</span>
+            <span class="match-clause">{{ item.clause_no }} {{ item.clause_title }}</span>
+            <span class="tag tag-slate">待人工核对</span>
+          </div>
+          <p v-if="item.reason" class="match-text">{{ item.reason }}</p>
+        </div>
+      </div>
+
+      <p v-if="!compliance.total" class="disclaimer">{{ compliance.summary }}</p>
     </div>
 
     <div v-if="unmatched.length" class="card card-pad warn">
@@ -312,6 +466,75 @@ function scoreClass(score) {
 
 .warn strong {
   margin-right: 6px;
+}
+
+.block-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.missing {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.missing li {
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--slate-200);
+  background: var(--slate-50);
+}
+
+.missing-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+
+.missing-head strong {
+  font-size: 13.5px;
+}
+
+.missing-advice {
+  font-size: 12.5px;
+  color: var(--slate-700);
+  line-height: 1.7;
+}
+
+.missing-src {
+  font-size: 11.5px;
+  color: var(--slate-500);
+  margin-top: 4px;
+}
+
+.cmp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.cmp-label {
+  font-size: 11.5px;
+  color: var(--slate-500);
+}
+
+.cmp-val {
+  font-weight: 600;
+  color: var(--slate-900);
+}
+
+.cmp-vs {
+  color: var(--slate-300);
+  font-size: 11.5px;
 }
 
 .disclaimer {

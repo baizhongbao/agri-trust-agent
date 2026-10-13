@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from app.modules.contract_parser.schema import (
     ContractFacts,
@@ -134,10 +135,12 @@ _RELATIVE_RE = re.compile(r"自\s*([^\n。；，]{2,20}?)\s*之日起")
 
 
 def _to_iso(year: str, month: str, day: str) -> str | None:
-    y, m, d = int(year), int(month), int(day)
-    if not (1 <= m <= 12 and 1 <= d <= 31):
+    # 用 datetime.date 做真校验：只查「月 1-12、日 1-31」会把 2026-02-31
+    # 这类不存在的日期当合法值放行。
+    try:
+        return date(int(year), int(month), int(day)).isoformat()
+    except ValueError:
         return None
-    return f"{y:04d}-{m:02d}-{d:02d}"
 
 
 def parse_date(raw: str) -> DateValue:

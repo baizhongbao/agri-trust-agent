@@ -61,3 +61,9 @@ export const simulateContract = (docId, scenarios = null, params = {}) =>
   postJson(`/api/v1/simulate/${docId}`, { doc_id: docId, scenarios, params })
 
 export const getSimulationRules = () => request('/api/v1/simulate/rules')
+
+export const evaluateVerdict = (docId) =>
+  postJson('/api/v1/verdict/evaluate', { doc_id: docId })
+
+export const verdictReportUrl = (docId, format = 'pdf') =>
+  `${BASE}/api/v1/verdict/${encodeURIComponent(docId)}/report?format=${format}`

@@ -21,7 +21,7 @@
 | 履约模拟 | P1 | ✅ 已完成 | 三情景推演：数值由 Python 计算 + 真实判例引用 + LLM 定性分析（mock 可降级） |
 
 > 两大 P1 已于 2026-10-07 完成并合入（单元测试全部通过）。
-> **尚未完成**：汇总判定层、报告导出、AgentArts 接入（详见第 11 节）。
+> **尚未完成**：AgentArts 接入（汇总判定层 + 报告导出已完成，详见第 11 节）。
 
 ---
 
@@ -39,6 +39,7 @@
 | Agent 接入 | **MCP stdio server**（`backend/app/mcp/agri_server.py`，FastMCP）· AgentArts 参赛资格线 |
 | 联网搜索 | Tavily（`SEARCH_PROVIDER=tavily`）· 离线降级（默认）。仅 Agent 加深时用，REST/前端不依赖 |
 | 履约模拟 | 纯 Python 数值计算 + 50 份裁判文书知识提炼的规则库（LLM 仅做定性解释，不碰数字） |
+| 报告导出 | PDF：PyMuPDF（内置简体中文字体 china-s，跨平台一致）· Word：python-docx |
 | 存储 | SQLite + 本地文件 + 内存索引 |
 
 ### 不要擅自引入
@@ -191,18 +192,24 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 │           │   ├── schema.py        报告数据模型
 │           │   ├── service.py       L1→L2→L3 编排
 │           │   └── router.py
-│           └── simulation/        ✅ P1
-│               ├── calculator.py    三情景纯 Python 数值计算（calc_steps 可复核）
-│               ├── rulebook.py      裁判规则库检索（50 份判例提炼）
-│               ├── schema.py        模拟报告数据模型
-│               ├── service.py       计算 → 引用 → LLM 定性（可降级）
+│           ├── simulation/        ✅ P1
+│           │   ├── calculator.py    三情景纯 Python 数值计算（calc_steps 可复核）
+│           │   ├── rulebook.py      裁判规则库检索（50 份判例提炼）
+│           │   ├── schema.py        模拟报告数据模型
+│           │   ├── service.py       计算 → 引用 → LLM 定性（可降级）
+│           │   └── router.py
+│           └── verdict/           ✅ 汇总判定（跨模块编排层）
+│               ├── schema.py        总体结论模型（等级 + 否决项 + 维度）
+│               ├── service.py       build_verdict（纯函数）/ run_verdict（取数）
+│               ├── exporter.py      报告装配 + PDF（PyMuPDF）/ Word（python-docx）渲染
 │               └── router.py
 │   └── tests/                    单元测试
 │       ├── test_parse_gate.py    L1→L2 升级判定 + L4 门禁 + 场景回归
 │       ├── test_image_upload.py  图片上传（magic byte → OCR 分发）
 │       ├── test_mcp_compact.py   MCP 工具输出体积上限（截断后须仍是合法 JSON）
 │       ├── test_party_credit_code.py  最近邻信用代码归属
-│       └── test_link_flow.py     条款切分 + 供方/需方角色识别
+│       ├── test_link_flow.py     条款切分 + 供方/需方角色识别
+│       └── test_verdict.py       汇总判定：一票否决 / 就低不就高 / 缺项不可评
 │
 ├── frontend/                     Vue3 + Vite
 │   ├── vite.config.js            代理 /api 与 /health 到 127.0.0.1:8000
@@ -289,6 +296,8 @@ Copy-Item .env.example .env
 | POST | `/api/v1/enterprise/lookup` | 直接查询单个企业（本地校验 + 工商信息） |
 | POST | `/api/v1/simulate/{doc_id}` | 履约模拟（价格波动 / 自然灾害 / 一方违约） |
 | GET | `/api/v1/simulate/rules` | 裁判规则库状态 |
+| POST | `/api/v1/verdict/evaluate` | 汇总判定：串起四模块输出总体可信度等级 |
+| GET | `/api/v1/verdict/{doc_id}/report?format=pdf\|docx` | 导出可信性评估报告（默认 pdf） |
 
 ### MCP 工具（Agent 接入，非 HTTP）
 
@@ -303,6 +312,8 @@ Copy-Item .env.example .env
 | `check_standard` | `doc_id`, `top_k`, `clause_limit` | 必备条款 + 数值合规 |
 | `verify_enterprise` | `doc_id` | L1 校验位 + L2 工商 + L3 交叉 |
 | `simulate` | `doc_id`, `scenarios`, `price_change_pct`, … | 三情景推演 |
+| `overall_verdict` | `doc_id` | 汇总判定：总体可信度等级 + 否决项 + 四维分项 |
+| `export_report` | `doc_id`, `format` | 导出报告（pdf/docx）到 `data/reports/`，返回路径 |
 | `search_web` | `query`, `max_results` | Tavily 联网取证（`SEARCH_PROVIDER=disabled` 时返回空 + 说明） |
 
 ```bash
@@ -373,19 +384,20 @@ Copy-Item .env.example .env
 - [x] **标准校验 P0**：依据库 v2.0（8 部 / 48 条条款 / 32 条限值）→ 混合检索 + 精排 → 必备条款缺失检测（18 项）→ 数值合规比对
 - [x] **企业核验 P1**：L1 校验位验算（GB 32100-2015）→ L2 工商查询（企查查 MCP 已配 Key，fixture 兜底）→ L3 合同 vs 登记交叉校验（名称/代码/成立日期/登记状态/经营范围）
 - [x] **履约模拟 P1**：三情景（价格波动/自然灾害/一方违约）纯 Python 数值计算（calc_steps 可复核）+ 50 份裁判文书规则库引用 + LLM 定性分析（mock 可降级）
-- [x] **MCP stdio server**：四模块 + `search_web` 包成 6 个 MCP 工具，Agent 可自主调度（`backend/app/mcp/agri_server.py`）
+- [x] **MCP stdio server**：四模块 + `overall_verdict` + `export_report` + `search_web` 包成 8 个 MCP 工具，Agent 可自主调度（`backend/app/mcp/agri_server.py`）
 - [x] 前端界面：上传、结构化结果、标准校验、企业核验、履约模拟、运行环境状态
+- [x] **前端补齐标准校验判定**：必备条款缺失清单（必备/建议分级）+ 数值合规比对（合同约定 vs 依据限值）均可在界面查看
+- [x] **加固修复（2026-10-13）**：锁 `mcp>=1.9.0,<2`（2.x 移除 `FastMCP`，会让 MCP Server 无法导入）；MCP `simulate` 违约方参数不再被吞；`doc_id` 白名单校验（挡路径穿越）+ 原件单写原子落盘；`/health` 移除服务器绝对路径；`facts` 日期用 `datetime.date` 真校验（拒 `2026-02-31`）；`simulate` 404 文案改用路径参数
+- [x] **汇总判定层（阶段①）**：`verdict` 模块把四模块结论归并为总体等级（可信/基本可信/需关注/高风险/不可评）+ 否决项 + 四维分项；REST `POST /api/v1/verdict/evaluate`、MCP `overall_verdict`、前端「汇总结论」页签；判定为纯函数，单模块失败标「不可评」不静默
+- [x] **报告导出**：`verdict/exporter.py` 把汇总结论 + 各模块明细装配成 `ReportModel`，渲染 PDF（PyMuPDF 内置中文字体 china-s）/ Word（python-docx）；REST `GET /api/v1/verdict/{doc_id}/report?format=pdf|docx`、MCP `export_report`、前端「导出 PDF / 导出 Word」；跨平台中文字体一致，无需系统字体
 - [x] 测试：单元测试 + 冒烟测试 + 接口测试，全部通过
 
 ### 下一步（建议顺序）
 
 1. **接盘古 + 实测 LLM 抽取器** —— 代码就绪但从未跑过真实模型，切 `LLM_PROVIDER=pangu` 后必须先冒烟
-2. **AgentArts 接入** —— 参赛资格线。MCP server 已就绪，剩下的是把它部署到后端公网可达处，再在 AgentArts 注册为 MCP Target
+2. **AgentArts 接入** —— 参赛资格线。MCP server 已就绪，剩下的是把它部署到后端公网可达处，再在 AgentArts 注册为 MCP Target（公网部署前需加认证与限流）
 3. **标的品类识别** —— 解决「水分 14.5% 对籼米一致、对籼稻谷偏离」的矛盾结论（`facts.subject_category` + 合规比对适用性过滤）
-4. **前端展示必备条款缺失 + 数值比对** —— 后端已产出，前端不可见
-5. **doc_id 冲突修复** —— `new_doc_id()` 是秒级时间戳，同秒上传两份会互相覆盖
-6. **汇总判定层 + 报告导出** —— 串起四模块，先出分项不要过早上加权总分
-7. **演示准备** —— 演示脚本、断网演练、录屏
+4. **演示准备** —— 演示脚本、断网演练、录屏
 
 ### 待人类完成（AI 无法代做）
 

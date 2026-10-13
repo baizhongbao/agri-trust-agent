@@ -19,7 +19,10 @@ from app.modules.contract_parser.schema import StructuredContract
 
 logger = logging.getLogger(__name__)
 
-_UNSAFE_FILENAME_RE = re.compile(r"[^\w\u4e00-\u9fa5.\-]+")
+# doc_id 白名单：只允许「纯时间戳」或「时间戳-短随机后缀」。
+# load_contract 会把 doc_id 直接拼进文件名，不校验就能读到 contracts/ 之外的 .json
+# （路径穿越）。历史数据存在旧格式的纯 14 位秒级时间戳，故下限取 14 位。
+_DOC_ID_RE = re.compile(r"^[0-9]{14,20}(?:-[0-9a-f]{2,8})?$")
 
 
 def contracts_dir() -> Path:
@@ -28,9 +31,20 @@ def contracts_dir() -> Path:
     return path
 
 
-def _safe_name(filename: str) -> str:
-    name = _UNSAFE_FILENAME_RE.sub("_", filename or "contract.pdf")
-    return name[-80:] if len(name) > 80 else name
+def is_valid_doc_id(doc_id: str) -> bool:
+    return bool(_DOC_ID_RE.match(doc_id or ""))
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def new_doc_id() -> str:
@@ -51,27 +65,29 @@ def save_contract(
     filename: str,
     contract: StructuredContract,
 ) -> None:
-    """保存原件与解析结果。"""
+    """保存原件与解析结果（单处落盘、原子写入，避免孤儿文件）。"""
+    if not is_valid_doc_id(doc_id):
+        raise ValueError(f"非法 doc_id：{doc_id!r}")
     settings.ensure_dirs()
     directory = contracts_dir()
 
-    (directory / f"{doc_id}.pdf").write_bytes(pdf_bytes)
+    _atomic_write_bytes(directory / f"{doc_id}.pdf", pdf_bytes)
     payload = {
         "doc_id": doc_id,
         "filename": filename,
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "contract": contract.model_dump(),
     }
-    (directory / f"{doc_id}.json").write_text(
+    _atomic_write_text(
+        directory / f"{doc_id}.json",
         json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
-
-    # 同时留一份可读副本，方便赛后复盘
-    (settings.upload_dir / f"{doc_id}__{_safe_name(filename)}").write_bytes(pdf_bytes)
 
 
 def load_contract(doc_id: str) -> StructuredContract | None:
+    if not is_valid_doc_id(doc_id):
+        logger.warning("拒绝非法 doc_id：%r", doc_id)
+        return None
     path = contracts_dir() / f"{doc_id}.json"
     if not path.exists():
         return None
@@ -84,6 +100,9 @@ def load_contract(doc_id: str) -> StructuredContract | None:
 
 
 def load_record(doc_id: str) -> dict | None:
+    if not is_valid_doc_id(doc_id):
+        logger.warning("拒绝非法 doc_id：%r", doc_id)
+        return None
     path = contracts_dir() / f"{doc_id}.json"
     if not path.exists():
         return None

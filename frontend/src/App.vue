@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
-import { checkStandards, getHealth, parseContract, simulateContract, verifyContract } from './api'
+import { checkStandards, evaluateVerdict, getHealth, parseContract, simulateContract, verifyContract } from './api'
 import ContractPanel from './components/ContractPanel.vue'
 import EnterprisePanel from './components/EnterprisePanel.vue'
 import ProviderCard from './components/ProviderCard.vue'
 import SimulationPanel from './components/SimulationPanel.vue'
 import StandardPanel from './components/StandardPanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
+import VerdictPanel from './components/VerdictPanel.vue'
 
 const health = ref(null)
 const contract = ref(null)
@@ -15,6 +16,7 @@ const docId = ref('')
 const report = ref(null)
 const enterpriseReport = ref(null)
 const simReport = ref(null)
+const verdictReport = ref(null)
 const activeTab = ref('contract')
 const busy = ref(false)
 const error = ref('')
@@ -40,6 +42,7 @@ async function handleUpload(file) {
   report.value = null
   enterpriseReport.value = null
   simReport.value = null
+  verdictReport.value = null
   progressText.value = '正在解析合同…'
 
   try {
@@ -101,6 +104,24 @@ async function runSimulation() {
   try {
     simReport.value = await simulateContract(docId.value)
     activeTab.value = 'simulate'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = false
+    progressText.value = ''
+  }
+}
+
+async function runVerdict() {
+  if (!docId.value || busy.value) return
+
+  busy.value = true
+  error.value = ''
+  progressText.value = '正在汇总四模块结论…'
+
+  try {
+    verdictReport.value = await evaluateVerdict(docId.value)
+    activeTab.value = 'verdict'
   } catch (e) {
     error.value = e.message
   } finally {
@@ -187,6 +208,15 @@ async function runSimulation() {
             履约模拟
             <span v-if="simReport" class="tab-badge">{{ simReport.scenarios?.length }}</span>
           </button>
+          <button
+            class="tab"
+            :class="{ active: activeTab === 'verdict' }"
+            :disabled="!verdictReport"
+            @click="activeTab = 'verdict'"
+          >
+            汇总结论
+            <span v-if="verdictReport" class="tab-badge">{{ verdictReport.grade }}</span>
+          </button>
 
           <div class="tabs-spacer" />
 
@@ -207,6 +237,9 @@ async function runSimulation() {
           >
             履约模拟
           </button>
+          <button class="btn btn-primary" :disabled="!docId || busy" @click="runVerdict">
+            汇总判定
+          </button>
         </nav>
 
         <div v-if="!contract" class="empty card">
@@ -224,6 +257,7 @@ async function runSimulation() {
         <StandardPanel v-else-if="report && activeTab === 'standard'" :report="report" />
         <EnterprisePanel v-else-if="enterpriseReport && activeTab === 'enterprise'" :report="enterpriseReport" />
         <SimulationPanel v-else-if="simReport && activeTab === 'simulate'" :report="simReport" />
+        <VerdictPanel v-else-if="verdictReport && activeTab === 'verdict'" :report="verdictReport" />
       </section>
     </main>
   </div>

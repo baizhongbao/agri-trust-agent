@@ -5,6 +5,9 @@
     POST /api/v1/contracts/parse         上传 PDF 并解析
     GET  /api/v1/contracts               合同列表
     GET  /api/v1/contracts/{doc_id}      读取单份结果
+    POST /api/v1/standards/check         标准校验
+    POST /api/v1/verdict/evaluate        汇总判定
+    GET  /api/v1/verdict/{doc_id}/report 报告导出（pdf/docx）
 
 用法：
     python scripts/api_test.py
@@ -207,6 +210,43 @@ def main() -> int:
                     print(f"     [时效] {notice['message']}")
         except Exception as exc:
             print(f"[FAIL] POST /api/v1/standards/check -> {exc}")
+            failures += 1
+
+        # ---- 9. 汇总判定 ----
+        print("-" * 62)
+        try:
+            response = client.post("/api/v1/verdict/evaluate", json={"doc_id": doc_id})
+            response.raise_for_status()
+            verdict = response.json()
+            print(
+                f"[OK] POST /api/v1/verdict/evaluate  "
+                f"grade={verdict['grade']}  {verdict['grade_reason']}"
+            )
+            for dim in verdict.get("dimensions", []):
+                print(f"     {dim['label']}：{dim['level']}——{dim['summary']}")
+            for blocker in verdict.get("blockers", []):
+                print(f"     [否决] {blocker['label']}")
+        except Exception as exc:
+            print(f"[FAIL] POST /api/v1/verdict/evaluate -> {exc}")
+            failures += 1
+
+        # ---- 10. 报告导出 ----
+        print("-" * 62)
+        try:
+            for fmt, magic in (("pdf", b"%PDF"), ("docx", b"PK")):
+                response = client.get(
+                    f"/api/v1/verdict/{doc_id}/report", params={"format": fmt}
+                )
+                response.raise_for_status()
+                ok = response.content.startswith(magic)
+                print(
+                    f"[{'OK' if ok else 'FAIL'}] GET report format={fmt}  "
+                    f"{len(response.content)} 字节"
+                )
+                if not ok:
+                    failures += 1
+        except Exception as exc:
+            print(f"[FAIL] GET /api/v1/verdict/{{doc_id}}/report -> {exc}")
             failures += 1
 
     print("=" * 62)

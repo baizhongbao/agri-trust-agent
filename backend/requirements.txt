@@ -34,11 +34,17 @@ huaweicloudsdkocr
 # ---- 结构化输出校验 ----
 jsonschema
 
+# ---- 报告导出 ----
+# Word：python-docx（纯 Python，跨平台）。PDF 复用上面已引入的 pymupdf。
+python-docx
+
 # ---- Agent 接入：MCP Server（stdio）----
 # 参赛资格线。backend/app/mcp/agri_server.py 把四个模块包成 MCP 工具，
 # 由 AgentArts / Claude Desktop / OpenCode 等 MCP 客户端直接调用。
 # 与 OpenCode 的 tavily 插件共用同一把 key，但服务端只从 .env 读，不读用户目录配置。
-mcp>=1.9.0
+# 必须锁 <2：mcp 2.x 已把 FastMCP 改名为 MCPServer，`from mcp.server.fastmcp import FastMCP`
+# 会直接 ModuleNotFoundError，导致 MCP Server 无法导入、pytest 收集阶段报错。
+mcp>=1.9.0,<2
 
 # ---- 开发与测试 ----
 pytest

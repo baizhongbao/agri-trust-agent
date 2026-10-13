@@ -41,7 +41,7 @@ def simulate(doc_id: str, payload: SimulateRequest | None = None) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if report is None:
-        raise HTTPException(status_code=404, detail=f"未找到合同 {payload.doc_id}")
+        raise HTTPException(status_code=404, detail=f"未找到合同 {doc_id}")
     return report.model_dump()
 
 

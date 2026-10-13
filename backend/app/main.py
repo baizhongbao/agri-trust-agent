@@ -18,6 +18,7 @@ from app.modules.contract_parser.router import router as contract_router
 from app.modules.enterprise_verify.router import router as enterprise_router
 from app.modules.simulation.router import router as simulate_router
 from app.modules.standard_check.router import router as standard_router
+from app.modules.verdict.router import router as verdict_router
 
 logging.basicConfig(
     level=logging.DEBUG if settings.app_debug else logging.INFO,
@@ -63,6 +64,7 @@ app.include_router(contract_router, prefix=API_PREFIX)
 app.include_router(standard_router, prefix=API_PREFIX)
 app.include_router(enterprise_router, prefix=API_PREFIX)
 app.include_router(simulate_router, prefix=API_PREFIX)
+app.include_router(verdict_router, prefix=API_PREFIX)
 
 
 @app.get("/", tags=["system"], summary="服务入口")
@@ -87,7 +89,6 @@ def health() -> dict:
         "app": settings.app_name,
         "version": settings.app_version,
         "env": settings.app_env,
-        "base_dir": str(BASE_DIR),
         "providers": describe_providers(),
         "credentials_configured": {
             "pangu_llm": settings.has_pangu_credentials,

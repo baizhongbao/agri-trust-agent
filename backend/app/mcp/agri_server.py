@@ -8,6 +8,8 @@
     check_standard       标准校验（必备条款 + 数值合规）
     verify_enterprise    企业核验（L1+L2+L3）
     simulate             履约模拟（价格 / 灾害 / 违约）
+    overall_verdict      汇总判定：串起四模块，给出总体可信度等级
+    export_report        导出可信性评估报告（pdf / docx）到 data/reports/
     search_web           联网搜索（Tavily，Agent 加深时取外部证据）
 
 无上传入口：文件解析只能走 REST /api/v1/contracts/parse 或预先放好样本，
@@ -36,6 +38,8 @@ from app.modules.contract_parser import service as contract_service
 from app.modules.enterprise_verify import service as enterprise_service
 from app.modules.simulation import service as simulate_service
 from app.modules.standard_check import service as standard_service
+from app.modules.verdict import exporter as report_exporter
+from app.modules.verdict import service as verdict_service
 
 mcp = FastMCP("agri-trust-agent")
 
@@ -252,16 +256,13 @@ def simulate(doc_id: str, scenarios: str | None = None, price_change_pct: float 
     """
     scenario_keys = scenarios.split(",") if scenarios else None
     params: dict[str, dict[str, Any]] = {}
-    filled = False
     if price_change_pct is not None:
         params["price_fluctuation"] = {"price_change_pct": price_change_pct}
-        filled = True
     if loss_ratio_pct is not None:
         params["natural_disaster"] = {"loss_ratio_pct": loss_ratio_pct}
-        filled = True
-    if scenarios is None and not filled:
-        params = {}
-    elif breach_party != "unspecified":
+    # breach_party 独立追加——不能挂在 if/elif 上，否则「只传 breach_party」时
+    # 会被前面的分支吞掉，违约方参数静默失效。
+    if breach_party != "unspecified":
         params["party_breach"] = {"breach_party": breach_party}
     try:
         report = simulate_service.simulate(
@@ -272,6 +273,37 @@ def simulate(doc_id: str, scenarios: str | None = None, price_change_pct: float 
     if report is None:
         return json.dumps({"ok": False, "note": f"未找到合同 {doc_id}"}, ensure_ascii=False)
     return _compact(_prioritized(report.model_dump(), ("doc_id", "notice")))
+
+
+@mcp.tool()
+def overall_verdict(doc_id: str) -> str:
+    """汇总判定：串起合同解析/标准校验/企业核验/履约模拟，给出总体可信度等级 + 否决项 + 各维度分项。
+
+    **先看 grade 与 blockers**：grade=不可评表示信息不完备，无法下结论；
+    blockers 非空表示存在客观硬伤（解析阻断/主体 fail/违反强制性依据），此时不要采信分项高分。
+    """
+    verdict = verdict_service.run_verdict(doc_id)
+    if verdict is None:
+        return json.dumps({"ok": False, "note": f"未找到合同 {doc_id}"}, ensure_ascii=False)
+    data = verdict.model_dump()
+    return _compact(
+        _prioritized(data, ("doc_id", "grade", "grade_reason", "blockers", "notices", "missing_dimensions"))
+    )
+
+
+@mcp.tool()
+def export_report(doc_id: str, format: str = "pdf") -> str:
+    """生成可信性评估报告文件（pdf / docx），保存到 data/reports/ 并返回可访问路径。"""
+    fmt = (format or "pdf").lower()
+    if fmt not in ("pdf", "docx"):
+        return json.dumps({"ok": False, "note": "format 仅支持 pdf / docx"}, ensure_ascii=False)
+    result = report_exporter.export_to_file(doc_id, fmt=fmt)
+    if result is None:
+        return json.dumps({"ok": False, "note": f"未找到合同 {doc_id}"}, ensure_ascii=False)
+    path, size = result
+    return json.dumps(
+        {"ok": True, "format": fmt, "path": str(path), "bytes": size}, ensure_ascii=False
+    )
 
 
 if __name__ == "__main__":
