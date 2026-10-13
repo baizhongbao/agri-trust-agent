@@ -169,6 +169,9 @@ class ContractFacts(BaseModel):
 
     amount: Money = Field(default_factory=Money)
     unit_price: Money = Field(default_factory=Money)
+    # 标的品类（如「籼稻谷」/「大米」）。合规比对靠它做限值适用性过滤，
+    # 否则同一份合同的水分指标会同时对多个品类下结论、互相矛盾。
+    subject_category: str = ""
     sign_date: DateValue = Field(default_factory=DateValue)
     effective_date: DateValue = Field(default_factory=DateValue)
     delivery: DateValue = Field(default_factory=DateValue)

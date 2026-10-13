@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.core.config import settings
-from app.core.providers.llm import extract_json
 from app.core.providers.registry import get_llm_provider, require
 from app.modules.contract_parser.facts import extract_facts
 from app.modules.contract_parser.pdf_reader import PdfText

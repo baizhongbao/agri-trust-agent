@@ -18,6 +18,7 @@ from app.core.providers.base import (
     OCRProvider,
     ProviderNotReadyError,
     RerankProvider,
+    SearchProvider,
 )
 from app.core.providers.embedding import (
     CloudEmbeddingProvider,

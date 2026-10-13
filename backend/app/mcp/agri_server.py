@@ -32,7 +32,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app.core.providers.base import SearchResult, SearchResultItem
 from app.core.providers.registry import get_search_provider
 from app.modules.contract_parser import service as contract_service
 from app.modules.enterprise_verify import service as enterprise_service
@@ -123,6 +122,7 @@ def _slim_standard_result(data: dict) -> dict:
             "standard_op": item.get("standard_op"),
             "standard_code": item.get("standard_code"),
             "clause_no": item.get("clause_no"),
+            "applies_to": item.get("applies_to") or [],
             "rule_strength": item.get("rule_strength"),
             "status": item.get("status"),
             "reason": _clip(item.get("reason"), _STD_REASON_CHARS),
@@ -168,6 +168,8 @@ def _slim_standard_result(data: dict) -> dict:
             "violation_count": comp.get("violation_count"),
             "mandatory_violation_count": comp.get("mandatory_violation_count"),
             "review_count": comp.get("review_count"),
+            "subject_category": comp.get("subject_category"),
+            "filtered_out_count": comp.get("filtered_out_count"),
             "violations": [slim_compliance_item(i) for i in comp.get("violations") or []],
             "reviews": [slim_compliance_item(i) for i in comp.get("reviews") or []],
             "timeliness": comp.get("timeliness") or [],

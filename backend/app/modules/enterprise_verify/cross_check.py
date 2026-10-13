@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from app.core.providers.base import RegistrationInfo
 from app.modules.contract_parser.schema import ContractFacts, Party
@@ -36,14 +37,18 @@ _DATE_RE = re.compile(r"(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})日?")
 
 
 def _to_iso_date(text: str) -> str | None:
-    """「1995-02-10」「1995年2月10日」「1995/2/10」→ ISO 日期；解析不了返回 None。"""
+    """「1995-02-10」「1995年2月10日」「1995/2/10」→ ISO 日期；解析不了返回 None。
+
+    用 datetime.date 做真校验，拒掉 2026-02-31 这类不存在的日期——
+    只查「月 1-12、日 1-31」会把它们当合法值放行（与 facts.py 保持同一标准）。
+    """
     match = _DATE_RE.search(text or "")
     if not match:
         return None
-    year, month, day = (int(g) for g in match.groups())
-    if not (1 <= month <= 12 and 1 <= day <= 31):
+    try:
+        return date(*(int(g) for g in match.groups())).isoformat()
+    except ValueError:
         return None
-    return f"{year:04d}-{month:02d}-{day:02d}"
 
 
 def detect_role(party: Party) -> str:

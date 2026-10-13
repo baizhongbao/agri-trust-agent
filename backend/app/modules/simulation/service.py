@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Any
 
-from app.core.providers.base import LLMProvider, ProviderNotReadyError
+from app.core.providers.base import LLMProvider
 from app.core.providers.registry import get_llm_provider
 from app.modules.contract_parser import service as contract_service
 from app.modules.simulation import calculator, rulebook
@@ -97,7 +97,7 @@ def _generate_analysis(
     try:
         result = llm.complete(prompt, system=_ANALYSIS_SYSTEM)
         return result.content.strip(), llm.name
-    except (ProviderNotReadyError, Exception) as exc:
+    except Exception as exc:  # 未就绪 / 网络 / 格式等一切故障都降级为模板
         logger.warning("定性分析生成失败，降级为模板：%s", exc)
         return _mock_analysis(scenario), "mock-fallback"
 

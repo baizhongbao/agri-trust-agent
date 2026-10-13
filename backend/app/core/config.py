@@ -182,7 +182,8 @@ class Settings(BaseSettings):
     # ---------------- 凭证就绪状态（供健康检查展示，不泄露内容）----------------
     @property
     def has_pangu_credentials(self) -> bool:
-        return bool(self.pangu_base_url and self.pangu_api_key)
+        # 与 PanguLLMProvider.is_ready() 同口径：缺 model 时不算就绪
+        return bool(self.pangu_base_url and self.pangu_api_key and self.pangu_model)
 
     @property
     def has_cloud_credentials(self) -> bool:

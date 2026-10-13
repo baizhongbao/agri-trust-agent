@@ -280,8 +280,8 @@ def summarize() -> None:
     lines = [
         "# 裁判案例风控知识提炼（复核稿）",
         "",
-        f"> 提炼来源：`docs/裁判文书案例/案例文件/` 50 份裁判文书",
-        f"> 提炼模型：deepseek-flash（脚本 `scripts/extract_knowledge.py`，配置在 `.env`）",
+        "> 提炼来源：`docs/裁判文书案例/案例文件/` 50 份裁判文书",
+        "> 提炼模型：deepseek-flash（脚本 `scripts/extract_knowledge.py`，配置在 `.env`）",
         f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M')}",
         f"> 统计：{len(items)} 案｜{rules_total} 条风险规则｜" + "，".join(f"{k} {v} 例" for k, v in sorted(by_category.items(), key=lambda kv: -kv[1])),
         "",

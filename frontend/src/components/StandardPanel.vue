@@ -144,6 +144,12 @@ function fmtValue(value, unit) {
         <div>
           <h2>数值合规比对</h2>
           <p class="sub">{{ compliance.summary }}</p>
+          <p v-if="compliance.subject_category" class="sub">
+            标的品类：{{ compliance.subject_category }}
+            <template v-if="compliance.filtered_out_count">
+              （已过滤 {{ compliance.filtered_out_count }} 条不适用限值）
+            </template>
+          </p>
         </div>
         <span
           v-if="compliance.mandatory_violation_count"
@@ -181,6 +187,9 @@ function fmtValue(value, unit) {
             <span class="match-standard">{{ item.standard_title }}</span>
             <span class="match-clause">{{ item.clause_no }} {{ item.clause_title }}</span>
             <span class="tag" :class="vulnTagClass(item.severity)">{{ item.basis }}</span>
+            <span v-if="(item.applies_to || []).length" class="tag tag-slate">
+              适用 {{ item.applies_to.join('、') }}
+            </span>
           </div>
           <p class="cmp">
             <span class="cmp-label">合同约定</span>

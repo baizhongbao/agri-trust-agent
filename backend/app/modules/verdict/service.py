@@ -346,7 +346,7 @@ def build_verdict(
         dimensions=dimensions,
         missing_dimensions=missing_dimensions,
         notices=notices,
-        generated_at=datetime.now().isoformat(timespec="seconds"),
+        generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         disclaimer=_DISCLAIMER,
     )
     verdict.narrative = _build_narrative(verdict)

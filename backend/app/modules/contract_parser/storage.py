@@ -55,7 +55,7 @@ def new_doc_id() -> str:
     时间戳在前的字典序仍等价于时间序（``list_contracts`` 依赖倒排取最近），
     微秒精度 + 短随机后缀保证同一时刻唯一。
     """
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    stamp = datetime.now().astimezone().strftime("%Y%m%d%H%M%S%f")
     return f"{stamp}-{secrets.token_hex(2)}"
 
 
@@ -75,7 +75,7 @@ def save_contract(
     payload = {
         "doc_id": doc_id,
         "filename": filename,
-        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "saved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "contract": contract.model_dump(),
     }
     _atomic_write_text(

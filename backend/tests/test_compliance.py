@@ -108,22 +108,50 @@ def test_limits_are_loaded_from_standard_library() -> None:
 def test_sample_contract_compliance() -> None:
     report = compliance.check_compliance(_contract())
 
-    # 水分 14.5%：符合大米（籼米）限值，但宽于优质籼稻谷的 13.5%
+    # 标的品类抽到「大米」，据此过滤掉不适用的稻谷限值
+    assert report["subject_category"] == "大米"
+
+    # 水分 14.5%：符合籼米 / 粳米限值；籼稻谷 / 粳稻谷限值已按品类过滤
     assert _find(report, "5.2", "籼米")["status"] == "compliant"
-    assert _find(report, "4.7", "籼稻谷")["status"] == "violation"
+    assert _find(report, "5.2", "粳米")["status"] == "compliant"
+    assert not any("籼稻谷" in item["applies_to"] for item in report["items"])
 
     # 杂质 1.0% 明显宽于 GB/T 1354 的 0.25%
     assert _find(report, "5.3", "大米")["status"] == "violation"
 
-    # 整精米率 55%：达到优质籼稻谷（≥50%），未达优质粳稻谷（≥60%）
-    assert _find(report, "4.3", "优质籼稻谷")["status"] == "compliant"
-    assert _find(report, "4.3", "优质粳稻谷")["status"] == "violation"
+    # 整精米率属稻谷标准（GB/T 17891），对大米合同整体过滤
+    assert not any(item["metric"] == "整精米率" for item in report["items"])
 
     # 违约金 10% 未超过示范条款的 30% 上限
     assert _find(report, "示范3.5")["status"] == "compliant"
 
+    assert report["filtered_out_count"] > 0
     assert report["violation_count"] == len(report["violations"])
     assert report["violation_count"] > 0
+
+
+def test_subject_category_filters_water_to_single_category() -> None:
+    """含「籼稻谷」的合同：水分只对籼稻谷（≤13.5%）报偏离，不再出现籼米一致。"""
+    report = compliance.check_compliance(_contract("标的为籼稻谷，水分含量不高于14.5%。"))
+
+    assert report["subject_category"] == "籼稻谷"
+    water = [item for item in report["items"] if item["metric"] == "水分"]
+    assert [item["applies_to"] for item in water] == [["籼稻谷"]]
+    assert water[0]["status"] == "violation"
+
+
+def test_empty_subject_category_keeps_previous_behaviour() -> None:
+    """抽不到品类时不启用过滤，结果与改动前一致（向后兼容、不静默改动）。"""
+    report = compliance.check_compliance(_contract("水分含量不高于14.5%。"))
+
+    assert report["subject_category"] == ""
+    assert report["filtered_out_count"] == 0
+    water_scopes = {
+        tuple(item["applies_to"]) for item in report["items"] if item["metric"] == "水分"
+    }
+    # 未过滤时，水分同时列出籼米 / 粳米 / 籼稻谷 / 粳稻谷（旧行为）
+    assert ("籼米",) in water_scopes
+    assert ("粳稻谷",) in water_scopes
 
 
 def test_violation_item_carries_source_and_reason() -> None:

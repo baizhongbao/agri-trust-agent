@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -161,6 +162,42 @@ def contract_values(contract: Any) -> dict[str, tuple[str, float, str]]:
         values[DEPOSIT_METRIC] = ("<=", round(deposit.rate * 100, 4), "%")
 
     return values
+
+
+# 品类约束：applies_to 里出现这些词，才说明该限值与「标的品类」相关；
+# 像「合同总金额」「主合同标的额」「精碾」这类非品类约束不参与过滤。
+_SUBJECT_TERMS = ("稻谷", "大米", "籼米", "粳米", "糯米", "糙米")
+# 通用品类 → 其下更具体的品类，避免「大米」合同丢掉籼米 / 粳米的共同限值
+_GENERIC_SUBJECT_EXPANSION = {
+    "大米": ("籼米", "粳米"),
+    "稻谷": ("籼稻谷", "粳稻谷"),
+}
+
+
+def _is_subject_constraint(applies_to: str) -> bool:
+    return any(term in (applies_to or "") for term in _SUBJECT_TERMS)
+
+
+def applies_to_subject(subject: str, applies_to: str) -> bool:
+    """判断某条限值的适用范围是否适用于该合同标的品类。
+
+    适用范围为空、或非品类约束（如「合同总金额」）→ 一律适用；
+    未抽到品类（subject 为空）→ 不过滤，与改动前完全一致（向后兼容）；
+    否则按包含关系匹配，并支持「通用品类 → 更具体品类」展开
+    （「大米」合同仍适用于籼米 / 粳米的共同限值）。
+    """
+    scope = (applies_to or "").strip()
+    if not scope or not _is_subject_constraint(scope):
+        return True
+    if not subject:
+        return True
+
+    tokens = [t.strip() for t in re.split(r"[、,，/]", scope) if t.strip()]
+    expansions = _GENERIC_SUBJECT_EXPANSION.get(subject, ())
+    return any(
+        token == subject or token in subject or subject in token or token in expansions
+        for token in tokens
+    )
 
 
 def _match_metric(contract_metric: str, limit_metric: str) -> bool:
@@ -308,6 +345,9 @@ def check_compliance(contract: Any) -> dict[str, Any]:
     values = contract_values(contract)
     timeliness = _timeliness(contract)
 
+    facts = getattr(contract, "facts", None)
+    subject = str(getattr(facts, "subject_category", "") or "") if facts is not None else ""
+
     if not values:
         return {
             "total": 0,
@@ -316,14 +356,18 @@ def check_compliance(contract: Any) -> dict[str, Any]:
             "mandatory_violation_count": 0,
             "review_count": 0,
             "violations": [],
+            "mandatory_violations": [],
             "reviews": [],
             "items": [],
             "timeliness": timeliness,
+            "subject_category": subject,
+            "filtered_out_count": 0,
             "summary": "合同中未抽到可量化的约定值，无法比对",
             "disclaimer": _DISCLAIMER,
         }
 
     grouped: dict[tuple, dict[str, Any]] = {}
+    filtered_out = 0
 
     for source in sources:
         matched = next(
@@ -331,6 +375,11 @@ def check_compliance(contract: Any) -> dict[str, Any]:
         )
         if matched is None:
             continue  # 合同没有约定这个指标，缺失由 checklist 报告
+
+        # 标的品类适配性：合同标的是籼稻谷，就不该拿大米 / 粳稻谷的限值下结论
+        if not applies_to_subject(subject, source.limit.applies_to):
+            filtered_out += 1
+            continue
 
         # 同一依据条款下数值相同的限值合并（如籼米与晚籼米同为 14.5%）
         key = (
@@ -395,6 +444,16 @@ def check_compliance(contract: Any) -> dict[str, Any]:
     reviews = [item for item in items if item["status"] == "review"]
     compliant = [item for item in items if item["status"] == "compliant"]
 
+    summary = (
+        f"可比对指标 {len(items)} 项：一致 {len(compliant)} 项、"
+        f"偏离依据 {len(violations)} 项（其中违反强制性依据 {len(mandatory_violations)} 项）、"
+        f"待人工核对 {len(reviews)} 项"
+    )
+    if subject:
+        summary += f"；标的品类「{subject}」"
+    if filtered_out:
+        summary += f"，已按品类过滤 {filtered_out} 条不适用限值"
+
     return {
         "total": len(items),
         "compliant_count": len(compliant),
@@ -406,10 +465,8 @@ def check_compliance(contract: Any) -> dict[str, Any]:
         "reviews": reviews,
         "items": items,
         "timeliness": timeliness,
-        "summary": (
-            f"可比对指标 {len(items)} 项：一致 {len(compliant)} 项、"
-            f"偏离依据 {len(violations)} 项（其中违反强制性依据 {len(mandatory_violations)} 项）、"
-            f"待人工核对 {len(reviews)} 项"
-        ),
+        "subject_category": subject,
+        "filtered_out_count": filtered_out,
+        "summary": summary,
         "disclaimer": _DISCLAIMER,
     }

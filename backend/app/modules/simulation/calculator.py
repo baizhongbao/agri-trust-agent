@@ -293,14 +293,12 @@ def simulate_party_breach(
             f"（合同总金额的 {penalty.rate:.2%}）。"
             "该金额低于实际损失可请求增加，过分高于损失（司法实践通常以 30% 为界）可请求酌减。"
         )
-        computable = True
         penalty_out: float | None = round(penalty_value, 2)
 
     elif kind == "fixed" and penalty.rate is not None:
         penalty_out = round(penalty.rate, 2)
         steps.append(_step(f"违约金（固定金额约定）= {penalty_out:,.2f} 元", penalty_out))
         summary = f"合同约定固定违约金 {_fmt(penalty_out)} 元。"
-        computable = True
 
     else:
         return {

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.providers.base import OCRProvider, ProviderNotReadyError
+from app.core.providers.base import ProviderNotReadyError
 from app.core.providers.ocr import CloudOCRProvider, DisabledOCRProvider
 from app.core.providers import registry
 

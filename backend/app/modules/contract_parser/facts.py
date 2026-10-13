@@ -364,6 +364,56 @@ def extract_payment_days(text: str) -> tuple[int | None, str]:
 
 
 # ============================================================
+#  标的品类
+# ============================================================
+
+# 品类词，从具体到通用排列——命中更具体的词优先（「优质籼稻谷」优于「稻谷」）。
+_SUBJECT_CANDIDATES = (
+    "优质籼稻谷", "优质粳稻谷", "优质稻谷",
+    "籼稻谷", "粳稻谷", "晚籼稻谷", "早籼稻谷",
+    "籼米", "粳米", "糯米", "糙米",
+    "大米", "稻谷",
+)
+
+# 出现这些词说明该句在描述标的 / 质量标准，品类判定优先采信这些句子
+_SUBJECT_CONTEXT = (
+    "质量标准", "质量等级", "质量要求", "等级",
+    "品种", "标的", "收购", "供应", "种植", "执行",
+)
+
+_SENTENCE_RE = re.compile(r"[^\n。；;]+")
+
+
+def extract_subject_category(text: str) -> str:
+    """抽取合同标的的品类（如「籼稻谷」/「大米」）。
+
+    合规比对必须知道标的是什么，否则同一份合同的「水分 14.5%」会
+    同时对「籼米」判一致、对「籼稻谷」判偏离——同一个指标给出互相矛盾的结论。
+
+    策略：逐句扫描，优先采信含「质量标准 / 品种 / 标的」等语境词的句子；
+    同一优先级内取命中词更长的（更具体）。**抽不到就返回空串，绝不猜测**。
+    """
+    body = text or ""
+    if not body:
+        return ""
+
+    best: tuple[int, int, str] | None = None  # (语境优先级, -词长, 词)
+    for sentence in _SENTENCE_RE.findall(body):
+        priority = next(
+            (i for i, kw in enumerate(_SUBJECT_CONTEXT) if kw in sentence),
+            len(_SUBJECT_CONTEXT),
+        )
+        for word in _SUBJECT_CANDIDATES:  # 已按具体度排序，命中即止
+            if word in sentence:
+                candidate = (priority, -len(word), word)
+                if best is None or candidate < best:
+                    best = candidate
+                break
+
+    return best[2] if best else ""
+
+
+# ============================================================
 #  字段定位（沿用 structurer 里已有的字段正则，保持一致）
 # ============================================================
 
@@ -412,6 +462,15 @@ def extract_facts(text: str) -> ContractFacts:
     if match:
         facts.delivery = parse_date(match.group(1))
         evidences["delivery"] = _snippet(body, match.start(), match.end())
+
+    # ---- 标的品类（合规比对的适用性依据）----
+    facts.subject_category = extract_subject_category(body)
+    if facts.subject_category:
+        cat_match = re.search(re.escape(facts.subject_category), body)
+        if cat_match:
+            evidences["subject_category"] = _snippet(
+                body, cat_match.start(), cat_match.end()
+            )
 
     # ---- 标的数量与种植面积 ----
     facts.quantity = _extract_quantity(body, "收购量")
