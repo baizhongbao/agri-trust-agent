@@ -92,6 +92,7 @@ def health() -> dict:
         "providers": describe_providers(),
         "credentials_configured": {
             "pangu_llm": settings.has_pangu_credentials,
+            "deepseek_llm": settings.has_deepseek_credentials,
             "huawei_ocr": settings.has_ocr_credentials,
             "enterprise_api": settings.has_enterprise_credentials,
             "cloud_embedding": settings.has_cloud_credentials,

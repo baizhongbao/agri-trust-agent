@@ -28,7 +28,11 @@ from app.core.providers.enterprise import (
     FixtureEnterpriseProvider,
     QccEnterpriseProvider,
 )
-from app.core.providers.llm import MockLLMProvider, PanguLLMProvider
+from app.core.providers.llm import (
+    DeepSeekLLMProvider,
+    MockLLMProvider,
+    PanguLLMProvider,
+)
 from app.core.providers.ocr import (
     CloudOCRProvider,
     DisabledOCRProvider,
@@ -39,6 +43,7 @@ from app.core.providers.search import DisabledSearchProvider, TavilySearchProvid
 
 _LLM: dict[str, Callable[[], LLMProvider]] = {
     "pangu": PanguLLMProvider,
+    "deepseek": DeepSeekLLMProvider,
     "mock": MockLLMProvider,
 }
 

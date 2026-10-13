@@ -31,7 +31,7 @@
 |---|---|
 | 后端 | Python 3.11+（Windows 开发机为 3.13）· FastAPI |
 | 前端 | Vue3 + Vite（**不引入 UI 框架**） |
-| 大模型 | 华为云盘古 · ModelArts Studio（MaaS，OpenAI 兼容接口） |
+| 大模型 | **deepseek-flash**（OpenAI 兼容 · tokenrhythm，当前默认 `LLM_PROVIDER=deepseek`）· 华为云盘古 MaaS（`pangu`，同为 OpenAI 兼容，保留待用）· `mock` 离线占位 |
 | OCR | 华为云文字识别（Linux 目标）· SiliconFlow PaddleOCR-VL（Windows 当前）· 仅扫描件需要 |
 | 向量化 | `BAAI/bge-m3`：云端 SiliconFlow（Windows 默认）· 本地权重（Linux 有显卡）· 哈希兜底（断网） |
 | 检索 | 向量 + BM25 混合召回 → `BAAI/bge-reranker-v2-m3` 精排（可选，失败自动降级） |
@@ -64,7 +64,7 @@
 
 | 开关 | Windows | Linux（拿到凭证后） |
 |---|---|---|
-| `LLM_PROVIDER` | `mock` | `pangu` |
+| `LLM_PROVIDER` | `deepseek`（deepseek-flash，已配 Key） | `deepseek` / `pangu` |
 | `OCR_PROVIDER` | `cloud`（SiliconFlow PaddleOCR-VL） | `huawei` |
 | `EMBEDDING_PROVIDER` | `cloud`（SiliconFlow bge-m3） | `local` |
 | `RERANK_PROVIDER` | `cloud`（bge-reranker-v2-m3） | `cloud` / `disabled` |
@@ -161,7 +161,7 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 │       │   ├── config.py        集中配置（唯一配置入口）
 │       │   └── providers/       可插拔外部依赖
 │       │       ├── base.py        抽象接口 + 异常
-│       │       ├── llm.py         pangu | mock
+│       │       ├── llm.py         pangu | deepseek | mock
 │       │       ├── ocr.py         huawei | disabled
 │       │       ├── embedding.py   cloud | local | hashing
 │       │       ├── rerank.py      cloud（SiliconFlow）| disabled
@@ -370,8 +370,8 @@ Copy-Item .env.example .env
 | **本机装了系统代理时接口偶发 502** | httpx 会自动读取 Windows 系统代理（本机为 `127.0.0.1:7897`），连 `127.0.0.1` 的本地请求也会被 `CONNECT` 隧道转发，长耗时请求（如 `/standards/check`）会撞代理超时被回 **502 空响应**。`.env` 里的 `HTTP_PROXY=` 无法覆盖（pydantic 不会写回 `os.environ`）。排查时在测试脚本里显式传 `trust_env=False`，或临时关掉代理 |
 | 云端向量化已启用 | `EMBEDDING_PROVIDER=cloud` 会把标准库语料与合同条款正文发到 SiliconFlow。断网演示前必须切回 `hashing` + `disabled` |
 | 企业核验走 qcc | `ENTERPRISE_API_PROVIDER=qcc` 依赖外网访问企查查 MCP。断网演示前切回 `fixture`；fixture 全部为虚构企业，代码校验位均真实有效 |
-| LLM 抽取器未实测 | `CONTRACT_STRUCTURER=llm` 代码就绪但从未接真实盘古跑过。切换后先冒烟验证，再用于演示 |
-| 联网搜索默认关闭 | `SEARCH_PROVIDER=disabled`。`search_web` 只在 MCP Agent 里可用，REST/前端无对应入口；`TAVILY_API_KEY` 留空时返回空结果 + 提示，不报错 |
+| LLM 抽取器已实测（deepseek） | `LLM_PROVIDER=deepseek`（deepseek-flash）已跑通真实链路：`LLMStructurer` 在示例合同上 **8/8** 字段命中。盘古（`pangu`）仍未实测 |
+| 联网搜索 | `SEARCH_PROVIDER=tavily`。`search_web` 只在 MCP Agent 里可用，REST/前端无对应入口；`TAVILY_API_KEY` 留空时返回空结果 + 提示，不报错 |
 
 ---
 
@@ -390,11 +390,12 @@ Copy-Item .env.example .env
 - [x] **加固修复（2026-10-13）**：锁 `mcp>=1.9.0,<2`（2.x 移除 `FastMCP`，会让 MCP Server 无法导入）；MCP `simulate` 违约方参数不再被吞；`doc_id` 白名单校验（挡路径穿越）+ 原件单写原子落盘；`/health` 移除服务器绝对路径；`facts` 日期用 `datetime.date` 真校验（拒 `2026-02-31`）；`simulate` 404 文案改用路径参数
 - [x] **汇总判定层（阶段①）**：`verdict` 模块把四模块结论归并为总体等级（可信/基本可信/需关注/高风险/不可评）+ 否决项 + 四维分项；REST `POST /api/v1/verdict/evaluate`、MCP `overall_verdict`、前端「汇总结论」页签；判定为纯函数，单模块失败标「不可评」不静默
 - [x] **报告导出**：`verdict/exporter.py` 把汇总结论 + 各模块明细装配成 `ReportModel`，渲染 PDF（PyMuPDF 内置中文字体 china-s）/ Word（python-docx）；REST `GET /api/v1/verdict/{doc_id}/report?format=pdf|docx`、MCP `export_report`、前端「导出 PDF / 导出 Word」；跨平台中文字体一致，无需系统字体
+- [x] **接入 deepseek-flash（OpenAI 兼容）**：新增 `DeepSeekLLMProvider`（`LLM_PROVIDER=deepseek`），替换盘古作为当前真实 LLM；示例合同 LLM 抽取实测 **8/8** 字段命中，`complete_json` / `complete` 均通。盘古 Provider 保留（华为技术，待凭证）
 - [x] 测试：单元测试 + 冒烟测试 + 接口测试，全部通过
 
 ### 下一步（建议顺序）
 
-1. **接盘古 + 实测 LLM 抽取器** —— 代码就绪但从未跑过真实模型，切 `LLM_PROVIDER=pangu` 后必须先冒烟
+1. **接盘古 + 实测盘古链路** —— deepseek-flash 已实测；拿到盘古 MaaS 凭证后再验证 `LLM_PROVIDER=pangu`
 2. **AgentArts 接入** —— 参赛资格线。MCP server 已就绪，剩下的是把它部署到后端公网可达处，再在 AgentArts 注册为 MCP Target（公网部署前需加认证与限流）
 3. **标的品类识别** —— 解决「水分 14.5% 对籼米一致、对籼稻谷偏离」的矛盾结论（`facts.subject_category` + 合规比对适用性过滤）
 4. **演示准备** —— 演示脚本、断网演练、录屏

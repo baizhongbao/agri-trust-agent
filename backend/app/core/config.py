@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # ---------------- 提供者选择 ----------------
     # 默认全部走离线兜底，保证无凭证、无重依赖也能跑通全链路
-    llm_provider: str = "mock"             # pangu | mock
+    llm_provider: str = "mock"             # pangu | deepseek | mock
     ocr_provider: str = "disabled"         # cloud | huawei | disabled
     embedding_provider: str = "hashing"    # cloud | local | hashing
     contract_structurer: str = "rule"      # llm | rule
@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     llm_max_tokens: int = 4096
     llm_timeout: int = 120
+
+    # ---------------- deepseek-flash（OpenAI 兼容 · tokenrhythm）----------------
+    # 与盘古同为 OpenAI /chat/completions 协议，用于替换盘古作为当前 LLM。
+    # base_url 与 model 非密钥，给默认值；API Key 只从 .env 取，绝不入库。
+    deepseek_base_url: str = "https://tokenrhythm.studio/v1"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-flash"
 
     # ---------------- 华为云 · 文字识别 ----------------
     ocr_endpoint: str = ""
@@ -181,6 +188,11 @@ class Settings(BaseSettings):
     def has_cloud_credentials(self) -> bool:
         """云端向量化 / 重排的凭证是否齐备（SiliconFlow）。"""
         return bool(self.cloud_api_base_url and self.cloud_api_key)
+
+    @property
+    def has_deepseek_credentials(self) -> bool:
+        """deepseek-flash（OpenAI 兼容）凭证是否齐备。"""
+        return bool(self.deepseek_base_url and self.deepseek_api_key and self.deepseek_model)
 
     @property
     def has_ocr_credentials(self) -> bool:
