@@ -134,6 +134,7 @@ def run_scenario(
         reason=calc.get("reason", ""),
         params=calc.get("params", {}),
         calc_steps=calc.get("calc_steps", []),
+        checks=calc.get("checks", []),
         summary=calc.get("summary", ""),
         legal_note=calc.get("legal_note", ""),
         citations=[Citation(**c) for c in cited.get("citations", [])],

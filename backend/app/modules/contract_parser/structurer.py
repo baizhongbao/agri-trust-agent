@@ -20,6 +20,7 @@ from app.core.providers.registry import get_llm_provider, require
 from app.modules.contract_parser.facts import extract_facts
 from app.modules.contract_parser.pdf_reader import PdfText
 from app.modules.contract_parser.schema import (
+    ARB_SINGLE,
     Clause,
     ContractField,
     Party,
@@ -426,6 +427,9 @@ class RuleBasedStructurer:
                     value=value,
                     confidence=rule.confidence if value else 0.0,
                     evidence=evidence,
+                    # 单源：没有第二个抽取器可比，confidence 只是本抽取器的静态先验
+                    agreement=ARB_SINGLE,
+                    source="rule",
                 )
             )
 
@@ -542,6 +546,9 @@ class LLMStructurer:
                     value=value,
                     confidence=0.9 if value else 0.0,
                     evidence=str(raw.get("evidence", "") or "").strip()[:160],
+                    # 单源：0.9 是写死的先验，不代表"模型很确信"——只有双源一致才叫证据
+                    agreement=ARB_SINGLE,
+                    source="llm",
                 )
             )
             if value and hasattr(contract, key):

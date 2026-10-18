@@ -16,10 +16,15 @@ from app.core.providers.base import ProviderNotReadyError
 from app.modules.contract_parser import gate, service
 from app.modules.contract_parser.pdf_reader import PdfText
 from app.modules.contract_parser.schema import (
+    ARB_AGREED,
+    ARB_CONFLICT,
+    ARB_MISSING,
+    ARB_SINGLE,
     GATE_BLOCKED,
     GATE_DEGRADED,
     GATE_OK,
     ContractField,
+    FieldArbitration,
     Party,
     StructuredContract,
 )
@@ -140,7 +145,15 @@ def test_no_escalation_without_text() -> None:
     assert "无输入" in reason
 
 
-# ---------------- 择优：绝不用更差的结果覆盖更好的 ----------------
+# ---------------- 字段级仲裁：合并而不是整份二选一 ----------------
+
+
+def _fields(**pairs: str) -> list[ContractField]:
+    return [ContractField(key=key, label=key, value=value) for key, value in pairs.items()]
+
+
+def _value_of(contract: StructuredContract, key: str) -> str:
+    return next((f.value for f in contract.fields if f.key == key), "")
 
 
 def test_choose_better_adopts_richer_l2() -> None:
@@ -148,11 +161,89 @@ def test_choose_better_adopts_richer_l2() -> None:
     l2 = _contract(parties=[Party(role="供方", name="某某材料有限公司")], amount="384,000 元")
     chosen, outcome, _ = gate.choose_better(l1, l2)
     assert outcome == gate.ESCALATION_ADOPTED
-    assert chosen is l2
+    # 旧行为是 `chosen is l2`（整份采用 L2）。现在改为字段级合并：
+    # 主体由 L2 补入，同时**保住 L1 自己的字段**——整份采用会丢掉它们。
+    assert [p.name for p in chosen.parties] == ["某某材料有限公司"]
+    assert chosen is not l1
+    assert _value_of(chosen, "amount") == "486,000 元"
+    assert _value_of(chosen, "sign_date") == "2026-09-18"
+
+
+def test_choose_better_merges_disjoint_field_hits() -> None:
+    """核心回归：两侧各命中**不同**字段时必须合并。
+
+    旧行为：`completeness` 三元组相等 → 判定平手 → 保留 L1 →
+    L2 唯一抽对的那个字段被白白丢掉（纯损失，没有任何取舍理由）。
+    """
+    l1 = _contract(
+        fields=_fields(amount="486,000 元"), amount="486,000 元", delivery_deadline=""
+    )
+    l2 = _contract(
+        fields=_fields(delivery_deadline="2026年11月30日"),
+        amount="",
+        delivery_deadline="2026年11月30日",
+    )
+    chosen, outcome, note = gate.choose_better(l1, l2)
+
+    assert outcome == gate.ESCALATION_ADOPTED
+    assert _value_of(chosen, "amount") == "486,000 元"  # L1 的没丢
+    assert _value_of(chosen, "delivery_deadline") == "2026年11月30日"  # L2 的补进来
+    assert "补充 1 项" in note
+
+
+def test_choose_better_conflict_keeps_rule_value_and_records_alternative() -> None:
+    """两侧都有值但不一致：保留确定性规则的值，另一侧留档，**不假装知道谁对**。"""
+    l1 = _contract(fields=_fields(amount="486,000 元"), amount="486,000 元")
+    l2 = _contract(fields=_fields(amount="384,000 元"), amount="384,000 元")
+
+    chosen, outcome, note = gate.choose_better(l1, l2)
+
+    assert outcome == gate.ESCALATION_MERGED  # L2 没补充字段，但提供了交叉验证
+    assert "冲突" in note
+    field = next(f for f in chosen.fields if f.key == "amount")
+    assert field.value == "486,000 元"
+    assert field.alternative == "384,000 元"
+    assert field.agreement == ARB_CONFLICT
+    assert field.confidence == pytest.approx(0.45)
+
+
+def test_choose_better_agreement_raises_confidence() -> None:
+    """双源一致才是有信息量的可信信号——置信度由一致度导出，不再写死。"""
+    l1 = _contract(fields=_fields(amount="486,000 元"), amount="486,000 元")
+    l2 = _contract(fields=_fields(amount="486,000 元"), amount="486,000 元")
+
+    chosen, outcome, note = gate.choose_better(l1, l2)
+
+    assert outcome == gate.ESCALATION_MERGED
+    field = next(f for f in chosen.fields if f.key == "amount")
+    assert field.agreement == ARB_AGREED
+    assert field.confidence == pytest.approx(0.95)
+    assert "双源一致" in note
+
+
+def test_choose_better_does_not_fabricate_parties_on_disjoint_role_schemes() -> None:
+    """L1 用「供方/需方」、L2 用「甲方/乙方」描述同一对当事人时，不能取并集。
+
+    按角色取并集会凭空造出 4 个主体，直接带偏主体数与下游企业核验。
+    """
+    l1 = _contract(
+        parties=[Party(role="供方", name="甲公司"), Party(role="需方", name="乙合作社")]
+    )
+    l2 = _contract(
+        parties=[Party(role="甲方", name="甲公司"), Party(role="乙方", name="乙合作社")]
+    )
+
+    chosen, _, _ = gate.choose_better(l1, l2)
+
+    assert len(chosen.parties) == 2  # 不是 4
+    roles = {a.key: a for a in chosen.arbitration}
+    assert roles["parties.roles"].status == ARB_CONFLICT
+    assert roles["parties.roles"].l1_value == "供方、需方"
+    assert roles["parties.roles"].l2_value == "甲方、乙方"
 
 
 def test_choose_better_rejects_placeholder_l2() -> None:
-    """mock LLM 返回空壳，直接采纳会把可用的 L1 结果清空。"""
+    """mock LLM 返回空壳：既无补充也无一致/冲突项 → 原样返回 L1，绝不覆盖。"""
     l1 = _contract()
     l2 = _contract(
         title="", parties=[], amount="", sign_date="", delivery_deadline="", fields=[]
@@ -170,6 +261,93 @@ def test_completeness_prioritizes_parties_over_fields() -> None:
     )
     one_party_no_fields = _contract(fields=[])
     assert gate.completeness(one_party_no_fields) > gate.completeness(no_party_many_fields)
+
+
+def test_rule_structurer_marks_single_source() -> None:
+    """单源时 agreement 必须是 single：没有第二个抽取器可比，confidence 只是静态先验。"""
+    contract = RuleBasedStructurer().structure(
+        PdfText(text=GOOD_TEXT, page_count=1, char_count=len(GOOD_TEXT), used_ocr=False)
+    )
+    assert contract.fields
+    assert {f.agreement for f in contract.fields} == {ARB_SINGLE}
+    assert contract.arbitration == []
+
+
+# ---------------- 双源冲突进入门禁 ----------------
+
+
+def _conflict(key: str, label: str) -> FieldArbitration:
+    return FieldArbitration(
+        key=key,
+        label=label,
+        status=ARB_CONFLICT,
+        l1_value="甲",
+        l2_value="乙",
+        chosen_value="甲",
+        chosen_from="l1",
+        confidence=0.45,
+    )
+
+
+def test_gate_degrades_on_required_field_conflict() -> None:
+    """值抽到了但两侧不一致 → 必须降级送人工核对，不能当成"抽到了就没问题"。"""
+    contract = _contract(arbitration=[_conflict("amount", "合同金额")])
+    result = gate.evaluate(contract)
+
+    assert result.level == GATE_DEGRADED
+    assert result.failures == []  # 不是"缺失"，是"冲突"——两者分开存
+    assert result.conflict_labels() == ["合同金额"]
+    assert "双源冲突" in result.summary
+
+
+def test_gate_degrades_on_party_conflict() -> None:
+    """主体名称两侧不一致会直接带偏企业核验，必须降级。"""
+    contract = _contract(arbitration=[_conflict("party.甲方.name", "甲方名称")])
+    result = gate.evaluate(contract)
+    assert result.level == GATE_DEGRADED
+    assert result.conflict_labels() == ["甲方名称"]
+
+
+def test_gate_stays_ok_on_non_required_conflict() -> None:
+    """非下游依赖的展示字段有措辞差异只留痕，不该把整份合同判成"不完整"。"""
+    contract = _contract(arbitration=[_conflict("quality_standard", "质量标准")])
+    result = gate.evaluate(contract)
+
+    assert result.level == GATE_OK
+    assert result.failures == []
+    assert result.conflict_labels() == ["质量标准"]  # 仍然留痕可见
+    assert "双源冲突" in result.summary
+
+
+def test_warning_line_surfaces_conflicts() -> None:
+    contract = _contract(arbitration=[_conflict("amount", "合同金额")])
+    line = gate.warning_line(gate.evaluate(contract))
+    assert "双源冲突" in line
+    assert "人工核对" in line
+
+
+def test_gate_summary_does_not_repeat_critical_conflicts() -> None:
+    """关键冲突已经在结论里点过名，不该再被"另有 N 项"重复念一遍。"""
+    contract = _contract(arbitration=[_conflict("amount", "合同金额")])
+    summary = gate.evaluate(contract).summary
+    assert summary.count("合同金额") == 1
+    assert "另有" not in summary
+
+
+def test_non_required_conflict_reported_separately() -> None:
+    """关键冲突降级 + 非关键冲突只留痕，两类要能分开读出来。"""
+    contract = _contract(
+        arbitration=[
+            _conflict("amount", "合同金额"),
+            _conflict("quality_standard", "质量标准"),
+        ]
+    )
+    result = gate.evaluate(contract)
+
+    assert result.level == GATE_DEGRADED
+    assert "另有 1 项非必备字段双源冲突" in result.summary
+    assert "质量标准" in result.summary
+    assert len(result.disagreements) == 2  # 两条都留痕
 
 
 # ---------------- warning 行 ----------------

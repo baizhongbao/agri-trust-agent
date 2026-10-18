@@ -27,6 +27,12 @@ class ScenarioResult(BaseModel):
     reason: str = ""
     params: dict = Field(default_factory=dict)
     calc_steps: list[dict] = Field(default_factory=list, description="计算过程，逐项公式与结果，可复核")
+    checks: list[dict] = Field(
+        default_factory=list,
+        description="确定性一致性校验的结构化结论（code / status / detail）。"
+        "status != ok 表示输入事实之间存在矛盾，数值虽已算出但需人工核对；"
+        "空列表表示该情景没有可自动校验的约束",
+    )
     summary: str = ""
     legal_note: str = ""
     analysis: str = Field(default="", description="LLM 定性分析（引用裁判规则的解释文字）")

@@ -214,16 +214,25 @@ def list_contracts(limit: int = 10) -> str:
 
 @mcp.tool()
 def get_contract(doc_id: str) -> str:
-    """按 doc_id 读取单份已解析合同（gate 解析门禁 + warnings + fields + facts + clauses）。
+    """按 doc_id 读取单份已解析合同（gate 解析门禁 + checks + warnings + fields + facts + clauses）。
 
-    请**先看 gate**：level=blocked 表示主体缺失、下游结论不可信；
-    level=degraded 表示有必备字段缺失，各模块的结论需附带该标注。
+    请**先看 gate**：
+    - level=blocked 表示主体/正文缺失，下游结论不可信；
+    - level=degraded 表示有必备字段缺失，或必备项出现**双源冲突**，各模块结论需附带该标注；
+    - `gate.disagreements` 是"值抽到了、但规则与大模型给出的不一致"，
+      系统不判断哪一侧正确，需人工核对原文。
+
+    `checks` 是纯 Python 的确定性自检（日期先后 / 定金 20% 上限 / 违约金复核），
+    status != ok 表示合同事实之间存在矛盾——字段都抽到了不等于彼此自洽。
     """
     contract = contract_service.get_contract(doc_id)
     if contract is None:
         return json.dumps({"ok": False, "note": f"未找到合同 {doc_id}"}, ensure_ascii=False)
     data = _shorten_clauses(contract.model_dump())
-    return _compact(_prioritized(data, ("doc_id", "gate", "warnings", "parties")))
+    # checks / arbitration 都是"失败信号"，必须排在 clauses 正文之前，否则会被截断吃掉
+    return _compact(
+        _prioritized(data, ("doc_id", "gate", "checks", "warnings", "parties"))
+    )
 
 
 @mcp.tool()
