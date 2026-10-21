@@ -1,141 +1,205 @@
-# 订单农业可信性 Agent
+# Agri-Trust Agent — Contract Credibility for Order Agriculture
 
 [![CI](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-> 上传一份订单农业合同，得到「可核验的结构化信息 + 对应的标准依据 + 履约风险推演」。
+> Upload an order-agriculture contract, get back verifiable structured facts, the
+> standards they must comply with, and a quantified view of performance risk.
 
-一份合同进，一份**带证据的评估报告**出 —— 不是让模型替你做判断，而是把散落在大段
-条款里的事实摊开、数字化、对着法规和判例逐条比对，让签约双方都能看懂、都能复核。
-
----
-
-## 为什么做这件事
-
-订单农业（"公司 + 农户"）是把小农户接进现代产业链的主要方式之一：农户按订单种植，
-企业按约定价格收购，农户有了销路，企业有了稳定货源。但它长期卡在一个环节上——**合同**。
-
-- **信息严重不对称**。企业有法务、有模板、有经验；多数农户第一次读这么长的合同，
-  不清楚"水分 ≤ 14.5%"意味着什么，也不清楚"定金 20%"其实是法律上限。
-- **纠纷高发且代价不对称**。种植面积、收购量、质量标准、结算时点，任何一处含糊都会在
-  收获季变成争执。争议发生时，农户承担的往往是全年收入，企业承担的是一笔违约金。
-- **风险被低估而不是被计算**。价格大跌时企业会不会拒收？自然灾害算不算不可抗力？
-  违约金能不能覆盖损失？签约当天没人能回答。
-- **核验成本高**。相对方是否真实存在、是否经营范围相符、是否已有大量涉诉记录，
-  普通人靠肉眼和口碑去判断。
-
-本项目想做的，是把"专业机构才能给出的合同尽调"变成一次上传即可得到的能力。
-它不替农户或企业做决定，而是**把决策所需的证据摆到台面上**——
-这也是我们把项目命名为"可信性"而不是"评估打分"的原因。
+One contract in, one **evidence-backed assessment** out. The system does not ask a
+language model to make judgment calls on your behalf — it lays the facts scattered
+across dense legal clauses on the table, turns them into numbers, and checks them
+line by line against statutes, national standards, and court precedents, so that
+both signing parties can read, verify, and challenge every conclusion.
 
 ---
 
-## 它能做什么
+## Why This Project Exists
 
-### 1. 合同解析：把条款变成可核验的事实
+Order agriculture — the "company + farmer" model — is one of the main bridges
+connecting smallholder farms to modern supply chains: farmers grow to order,
+companies purchase at agreed prices, farmers gain a stable outlet, and companies
+gain a reliable source of supply. In practice, the model keeps getting stuck at
+the same point: **the contract**.
 
-上传 PDF 或图片（扫描件、手机拍照的合同都支持）。系统输出两层结果：
+- **Severe information asymmetry.** The company has lawyers, templates, and years
+  of experience. Most farmers are reading a contract this long for the first time —
+  unclear what "moisture ≤ 14.5%" actually implies, or that a 20% down payment is
+  a legal ceiling, not a suggestion.
+- **Disputes are frequent, and the cost is asymmetric.** Planted area, purchase
+  volume, quality specs, settlement timing — any ambiguity turns into a dispute at
+  harvest. When it does, the farmer typically risks an entire year's income while
+  the company risks a penalty clause.
+- **Risk is underestimated, not calculated.** Will the company still take delivery
+  after a price crash? Does a natural disaster count as force majeure? Can the
+  penalty cover actual losses? On signing day, nobody can answer.
+- **Verification is expensive.** Does the counterparty actually exist? Does its
+  business scope cover the deal? Does it carry a track record of lawsuits? Ordinary
+  people have only word of mouth.
 
-- **展示层**：合同主体、标的、数量、单价、总金额、质量标准、交付期限、结算方式、
-  违约责任等字段，**每一项都附带支撑它的原文片段**，点开即可对照原件。
-- **推理层**：金额转数值、日期转标准格式、质量指标转"名称-比较符-阈值"三元组。
-  「486,000 元」变成可以比较大小的数字，后面的合规比对和损失推演全靠它。
-
-抽取由**规则引擎 + 大模型双通道**完成，逐项仲裁、不一致时保留确定性结果并显式标注冲突，
-交由人工核对——系统不假装自己能判断哪一侧是对的。
-
-### 2. 标准校验：对着法规和标准逐条比
-
-内置结构化依据库：**8 部依据 / 48 条条款 / 32 条可比较的限值**——
-以《订单农业合同规范指引》与《农产品订单合同示范条款》为骨架，
-叠加民法典合同编、粮食流通管理条例，以及农残限量、污染物限量、大米与优质稻谷
-质量分级等可量化标准，每条都带规则强度与生效时效。
-
-- **必备条款缺失检测**：18 项清单（11 项必备 + 7 项建议），缺哪一条、该补什么，逐条列出。
-- **数值合规比对**：把合同里的定金比例、违约金比例、水分/杂质/农药残留等指标，
-  与法定或标准限值对齐比较，直接指出"合同约定 25% vs 法定上限 20%"这类问题；
-  并做**标的品类适用性过滤**——用稻谷的合同不会去套小麦的限值。
-- 每条结论都能回溯到具体依据条文，可查、可复核。
-
-### 3. 企业核验：合同对手方是不是真的
-
-三级递进，任何一级失败都有可见痕迹：
-
-- **L1 本地验算**：统一社会信用代码校验位（GB 32100-2015）。不查库、不联网，
-  就能发现"代码是随手编的"这种最廉价也最常见的造假。
-- **L2 工商查询**：登记名称、法定代表人、成立日期、经营状态、经营范围。
-- **L3 交叉校验**：合同里写的和工商登记的，逐项对——主体名称不符、合同签署日期早于公司成立日期、
-  经营范围不含所交易品类，这类矛盾会在签字前被拦下。
-
-判不了就返回"需人工核对"，不硬拍一个结论。
-
-### 4. 履约模拟：把风险换算成钱
-
-围绕订单农业最常见的三类争议做情景推演：**价格剧烈波动、自然灾害、一方违约**。
-
-**所有数字由 Python 精确计算**（每一步计算过程可导出复核），大模型只负责定性分析——
-因为把 14.5 读成 15 就是事故。判责倾向引用从 **50 份农业承包、购销、土地经营权合同纠纷
-裁判文书**中提炼的裁判规则，并标注对应案号。
-
-### 5. 汇总判定与报告
-
-把上述四个模块的结论归并为总体可信度等级（可信 / 基本可信 / 需关注 / 高风险 / 不可评），
-单列**一票否决项**（如主体无法核验、关键条款双源冲突），并导出 PDF / Word 报告，
-可以直接打印给农户看。
+This project aims to turn what only professional firms could offer — contract due
+diligence — into a capability available with a single upload. It makes no decision
+for farmers or companies; it **puts the evidence needed for the decision on the
+table**. That is also why the project is named "credibility" rather than "scoring".
 
 ---
 
-## 为什么它可信
+## What It Does
 
-一个"AI 帮你读合同"的产品，最大的风险是让人盲信它。这个项目的设计取向是**宁可承认没读到，
-也不给出一个看起来很确定的错误结论**：
+### 1. Contract Parsing — turning clauses into verifiable facts
 
-- **结论必须带证据**。没有原文依据的字段不允许出现在结果里。
-- **数字不经过大模型**。合规比对、损失计算全部是确定性代码，可复核、可复现。
-- **缺失、冲突、失败都必须显式留痕**。解析门禁、模块降级提示、"不可评"状态都是结构化输出，
-  不会用"全 0 风险"冒充"没问题"。
-- **自检不靠模型**。日期先后矛盾、定金超过法定上限、金额与单价数量对不上，由纯 Python 判定，
-  产出机器可读的原因码。
-- **判定就低不就高**。任一维度为高风险即总体高风险，缺失的维度不参与"取平均"。
+Upload a PDF or an image (scanned contracts and phone photos are supported).
+The system produces two layers of output:
+
+- **Presentation layer**: contracting parties, subject matter, quantity, unit
+  price, total amount, quality standards, delivery deadlines, settlement terms,
+  breach liabilities — **each field carries the exact source text that supports
+  it**, so every value can be checked against the original document.
+- **Reasoning layer**: amounts become numbers, dates become machine-readable
+  values, quality metrics become *name–operator–threshold* triples. "486,000 CNY"
+  becomes a number you can compare, which everything downstream — compliance
+  checks, loss simulation — depends on.
+
+Extraction runs through **two independent channels — a deterministic rule engine
+and a large language model — and every field is arbitrated item by item**. When the
+two disagree, the deterministic result is kept, the conflict is explicitly flagged,
+and the item is routed to human review. The system never pretends to know which
+side is right.
+
+### 2. Standards Compliance — checking against statutes and national standards
+
+A structured knowledge base holds **8 legal instruments / 48 clauses / 32
+machine-comparable limits**, anchored on the *Guidelines for Order-Agriculture
+Contracts* and *Model Clauses for Agricultural Product Orders*, extended with the
+Civil Code (contract provisions), grain circulation regulations, and quantifiable
+standards such as pesticide residue limits, contaminant limits, and rice quality
+grading — each entry tagged with rule strength and effective dates.
+
+- **Missing-clause detection**: an 18-item checklist (11 mandatory + 7
+  recommended) lists exactly which clauses are absent and what to add.
+- **Numeric compliance checks**: down-payment ratios, penalty rates, moisture,
+  impurity, and pesticide residue indicators are compared against statutory and
+  standard limits, surfacing problems like "contract says 25% vs the 20% legal
+  ceiling". Checks are **filtered by commodity applicability** — a rice contract
+  is never benchmarked against wheat limits.
+- Every conclusion traces back to a specific provision — checkable, reviewable.
+
+### 3. Enterprise Verification — is the counterparty real?
+
+Three progressive levels; a failure at any level is always visible, never silent:
+
+- **Level 1 — local checksum**: Unified Social Credit Code validation
+  (GB 32100-2015). No database, no network — yet it already catches the cheapest
+  and most common fraud: a fabricated code.
+- **Level 2 — business registry lookup**: registered name, legal representative,
+  incorporation date, operating status, business scope.
+- **Level 3 — cross-checking**: contract facts vs registry facts, item by item.
+  A party name that doesn't match, a signing date earlier than the company's
+  incorporation date, a business scope that doesn't cover the traded commodity —
+  these contradictions are caught before signatures are applied.
+
+When the system cannot judge, it returns "needs human review" instead of guessing.
+
+### 4. Performance Simulation — turning risk into money
+
+Scenario simulation around the three most common sources of order-agriculture
+disputes: **price volatility, natural disasters, and breach of contract**.
+
+**Every number is computed by deterministic Python code** — the full calculation
+trail is exportable for audit — while the LLM is restricted to qualitative
+analysis, because a model that misreads 14.5 as 15 is an accident waiting to
+happen. Liability reasoning cites rules distilled from **50 real court judgments**
+covering agricultural contracting, purchase-and-sale, and land-management-rights
+disputes, each annotated with its case number.
+
+### 5. Overall Verdict and Report
+
+The four modules' conclusions are consolidated into an overall credibility rating
+(trustworthy / basically trustworthy / needs attention / high risk / not
+assessable), with **veto items** listed separately (e.g., an unverifiable party,
+a two-source conflict on a mandatory field). The result exports to PDF / Word —
+printable and readable by the farmer across the table.
 
 ---
 
-## 适用边界
+## Why It Is Trustworthy
 
-诚实说明它现在做不到什么：
+The biggest danger of any "AI reads your contract" product is that people blindly
+trust it. This project's design principle is: **rather admit it failed to read
+than produce a confident wrong answer.**
 
-- **不是法律意见**，不能替代律师审查与当事人协商；输出是风险提示与证据索引。
-- 依据库覆盖的是当前已结构化的法规与规范指引，**不等于全部现行有效规范**；
-  数值限值目前以粮食（稻谷 / 大米）品类为主，其他品类与地方性法规需要按需扩充。
-- 判例规则来自 50 份已提炼的裁判文书，是**倾向性参考**而非法律依据。
-- 对排版极不规范、手写或严重模糊的合同，抽取质量会下降；此时系统会降级并要求人工核对。
-- 履约模拟给出的是**风险量级与判责倾向**，不是判决预测。
-
----
-
-## 未来方向
-
-- **接入华为云 AgentArts**：MCP Server 已就绪，把这套能力作为工具交由智能体自主调度，
-  让 Agent 在本地四模块之外继续联网取证（涉诉记录、政策变动、同类判例）。
-- **真·多模态直读**：当前对图片/扫描件是先 OCR 再解析，下一步让视觉模型直接读版面、
-  表格与签章，把"是否已盖章""手写补充条款"这类版面信息纳入核验。
-- **依据库持续扩展**：按品类（粮食、果蔬、畜禽、水产、中药材）和地区做适用性过滤，
-  纳入更多现行标准与地方条例。
-- **可复制到的场景**：农机作业服务合同、土地经营权流转合同、农业生产资料购销、
-  农业社会化服务——同一套"解析 → 依据比对 → 交叉核验 → 风险量化"骨架，换依据库即可迁移。
-- **面向县域服务端**：农业农村部门、合作社、涉农金融机构在贷前审查与纠纷调解中，
-  都可以用它做第一道筛查。
-
-对农户，它降低签约前的信息门槛；对企业，它减少合同瑕疵带来的履约争议；
-对监管与调解机构，它把"合同是否规范"从主观判断变成可查证的清单。
-这是我们认为这个项目值得继续做下去的理由。
+- **Every conclusion carries evidence.** A field without supporting source text
+  is not allowed to appear in results.
+- **Numbers never pass through the LLM.** Compliance checks and loss calculations
+  are deterministic code — reproducible and auditable.
+- **Missing, conflicting, and failed states are always explicit.** Parsing gates,
+  module degradation notices, and "not assessable" statuses are structured
+  outputs; the system never dresses up a zero as "no risk found".
+- **Self-checks do not rely on the model.** Date-order contradictions, down
+  payments above the statutory ceiling, totals inconsistent with unit price ×
+  quantity — all detected by pure Python, emitting machine-readable reason codes.
+- **The verdict rounds down, not up.** One high-risk dimension makes the overall
+  verdict high risk; missing dimensions are never averaged away.
 
 ---
 
-## 快速开始
+## Scope and Limitations
 
-```powershell
-# Windows
+An honest account of what it cannot do today:
+
+- **It is not legal advice.** It does not replace lawyers or negotiation; output
+  is risk indication plus an evidence index.
+- The knowledge base covers the statutes and guidelines currently structured
+  into it — **not the entire body of applicable law**. Numeric limits today focus
+  on grain commodities (paddy / rice); other categories and regional regulations
+  need to be added case by case.
+- Precedent rules are distilled from 50 judgments — they indicate **liability
+  tendencies**, not binding legal authority.
+- For badly typeset, handwritten, or heavily degraded documents, extraction
+  quality drops; the system degrades explicitly and demands human review.
+- Simulation output is **risk magnitude and liability tendency**, not a prediction
+  of court outcomes.
+
+---
+
+## Roadmap
+
+- **Agent orchestration on Huawei Cloud AgentArts**: the MCP server is ready;
+  the capability set will be exposed as tools for autonomous agents, letting an
+  agent extend the local analysis with live web evidence (litigation records,
+  policy changes, similar cases).
+- **Upgrading the LLM backbone to OpenAI's ChatGPT API (GPT series)**: all LLM
+  calls already go through one OpenAI-compatible interface, so switching the
+  provider from the current models to ChatGPT is a configuration change, not a
+  rewrite — the plan is to adopt GPT-class models for contract structuring and
+  qualitative risk analysis as the project matures.
+- **True multimodal reading**: image and scanned contracts are currently parsed
+  after OCR; the next step is letting vision models read layout, tables, and
+  seals directly, bringing layout-level signals ("is it stamped?", "are there
+  handwritten amendments?") into verification.
+- **Growing the knowledge base**: applicability filtering by commodity (grain,
+  produce, livestock, aquaculture, medicinal herbs) and by region, incorporating
+  more current standards and local regulations.
+- **Replicable to adjacent scenarios**: farm-machinery service contracts,
+  land-management-rights transfers, agricultural input purchases, and
+  agricultural socialized services — the same
+  *parse → check against standards → cross-verify → quantify risk* skeleton
+  transfers by swapping the knowledge base.
+- **County-level services**: agriculture departments, cooperatives, and rural
+  financial institutions can use it as the first-pass screen in loan review and
+  dispute mediation.
+
+For farmers, it lowers the information barrier before signing; for companies, it
+reduces performance disputes caused by contract defects; for regulators and
+mediators, it turns "is this contract sound?" from a subjective judgment into a
+checkable list. That is why we believe this project is worth building.
+
+---
+
+## Quick Start
+
+```bash
+# Windows (PowerShell)
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 Copy-Item .env.example .env
@@ -152,39 +216,46 @@ python scripts/make_sample_contract.py
 uvicorn app.main:app --app-dir backend --reload
 ```
 
-前端 <http://127.0.0.1:5173> · 后端 <http://127.0.0.1:8000> · 接口文档 <http://127.0.0.1:8000/docs>
+Frontend <http://127.0.0.1:5173> · Backend <http://127.0.0.1:8000> · API docs <http://127.0.0.1:8000/docs>
 
-**开箱即用，无需任何密钥。** 默认配置全部走离线实现（哈希向量 + 规则抽取 + 内置演示企业库），
-clone 下来就能跑通完整链路并看到示例合同的评估报告。需要更强能力时，
-只改 `.env` 里的 Provider 开关即可切换到大模型、云端 OCR、真实工商数据与语义检索，
-业务代码零改动——开关清单见 `.env.example`。
+**Works out of the box with no API keys.** The default configuration runs entirely
+on offline providers (hashing embeddings + rule-based extraction + a bundled demo
+business registry), so a fresh clone runs the full pipeline and produces a complete
+assessment report for the sample contract. When you need stronger capabilities,
+flip the provider switches in `.env` to enable LLM structuring, cloud OCR, real
+business-registry data, and semantic retrieval — zero business-code changes. The
+full switch list is documented in `.env.example`.
 
 ---
 
-## 技术选型
+## Tech Stack
 
-| 层 | 选型 |
+| Layer | Choice |
 |---|---|
-| 后端 | Python 3.11+ · FastAPI · SQLite + 本地文件 |
-| 前端 | Vue3 + Vite（零 UI 框架依赖） |
-| 大模型 | 华为云盘古 MaaS · deepseek · 离线 mock（OpenAI 兼容接口统一封装） |
-| OCR | 华为云文字识别 · 云端视觉模型 · 可关闭 |
-| 检索 | 向量 + BM25 混合召回 → 重排精排（`bge-m3` / `bge-reranker-v2-m3`，可降级） |
-| Agent | MCP stdio server，可注册为 AgentArts / 通用 MCP 客户端的工具 |
-| 报告 | PyMuPDF（PDF，内置中文字体）· python-docx（Word） |
+| Backend | Python 3.11+ · FastAPI · SQLite + local file storage |
+| Frontend | Vue3 + Vite (zero UI-framework dependencies) |
+| LLM | OpenAI ChatGPT API (GPT series) · Huawei Cloud Pangu MaaS · offline mock — all behind one OpenAI-compatible interface |
+| OCR | Huawei Cloud OCR · cloud vision models · can be disabled |
+| Retrieval | Vector + BM25 hybrid recall → cross-encoder reranking (`bge-m3` / `bge-reranker-v2-m3`, degradable) |
+| Agent | MCP stdio server, registrable as a tool source for AgentArts and any MCP client |
+| Reports | PyMuPDF (PDF, bundled CJK fonts) · python-docx (Word) |
 
-设计上最重要的约束：**所有外部依赖都走 Provider 抽象层**，
-"有凭证"与"无凭证"两条路共用同一套业务代码，任一供应商可单独替换。
+The most important architectural constraint: **every external dependency sits
+behind a provider abstraction layer**, so the credentialed and credential-free
+paths share the same business code, and any vendor can be swapped in isolation.
 
 ---
 
-## 贡献与许可
+## Contributing and License
 
-欢迎 Issue 与 Pull Request。提 PR 前请先读 [`AGENTS.md`](./AGENTS.md)（架构铁律与红线），
-并确保 CI 两个 job 均为绿色。
+Issues and pull requests are welcome. Before submitting a PR, please read
+[`AGENTS.md`](./AGENTS.md) (architecture rules and red lines) and make sure both
+CI jobs are green.
 
-本项目以 [Apache License 2.0](./LICENSE) 授权。
+This project is licensed under the [Apache License 2.0](./LICENSE).
 
-> **想看实现细节？** 接口清单、数据模型、Provider 开关、模块职责、测试与排障，
-> 全部写在 [`AGENTS.md`](./AGENTS.md)；环境与技术分析见 [`docs/`](./docs/)。
-> 本文件只负责讲清楚"这是做什么的、为什么值得做"。
+> **Looking for implementation details?** The API list, data models, provider
+> switches, module responsibilities, testing, and troubleshooting all live in
+> [`AGENTS.md`](./AGENTS.md); environment and technical analyses are under
+> [`docs/`](./docs/). This file only explains what the project is and why it
+> matters.
