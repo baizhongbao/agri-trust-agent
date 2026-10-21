@@ -1,8 +1,6 @@
 # 订单农业可信性 Agent
 
 > 把一份订单农业合同 PDF，变成「可核验的结构化信息 + 对应标准依据 + 风险推演」。
-
-参加华为 ICT 创新大赛的项目。核心诉求是**可信**：所有抽取值都带原文 `evidence`，
 所有数值计算都由纯 Python 完成（不交给 LLM），无法判定时显式返回 `review` 而非硬拍结论。
 
 ---
@@ -100,9 +98,6 @@ uvicorn app.main:app --app-dir backend --reload
 | `VECTOR_STORE_BACKEND` | `simple` | `chroma` |
 | `SEARCH_PROVIDER` | `disabled` | `tavily` |
 
-**断网演示前**务必切回全离线组合：`EMBEDDING_PROVIDER=hashing`、
-`RERANK_PROVIDER=disabled`、`ENTERPRISE_API_PROVIDER=fixture`、`SEARCH_PROVIDER=disabled`。
-
 完整变量及说明见 `.env.example`。
 
 ---
@@ -139,22 +134,7 @@ uvicorn app.main:app --app-dir backend --reload
 
 ---
 
-## 测试
 
-```powershell
-# 1. 单元测试（不启服务）
-.venv\Scripts\python.exe -m pytest backend\tests -q
-
-# 2. 端到端冒烟（不启服务）
-.venv\Scripts\python.exe scripts\smoke_test.py
-
-# 3. 接口测试（需服务已启动）
-.venv\Scripts\python.exe scripts\api_test.py
-```
-
-通过标准：单元测试全过、字段命中率 8/8、冒烟测试 `gate` 为 `OK`、接口用例全过。
-
----
 
 ## 目录结构
 
@@ -188,4 +168,4 @@ uvicorn app.main:app --app-dir backend --reload
 - **解析分两级且不可回退**：L1 规则抽取为默认路径，仅在命中升级条件时触发 L2 LLM 重解析，且**只在更完整时才采纳**。
 - **判不了就返回 review**：显式给「需人工核对」，优于错误的确定结论。
 
-更多开发约定、红线与进度见 [`AGENTS.md`](./AGENTS.md)。
+
