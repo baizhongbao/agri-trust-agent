@@ -77,6 +77,23 @@ def _completeness_dim(contract: Any, blockers: list[Blocker]) -> DimensionVerdic
         if label or detail:
             findings.append(f"{label}：{detail}".strip("："))
 
+    # 字段级双源冲突：值抽到了，但两个抽取器不一致 —— 与"缺失"是两回事，必须分开呈现
+    disagreements = getattr(gate, "disagreements", None) or []
+    for item in disagreements:
+        findings.append(
+            f"双源冲突「{getattr(item, 'label', '')}」：规则取「{getattr(item, 'l1_value', '')}」、"
+            f"大模型取「{getattr(item, 'l2_value', '')}」，系统不做取舍，需人工核对原文"
+        )
+
+    # 事实自检：单项抽到 ≠ 整体自洽
+    fact_problems = [
+        c for c in (getattr(contract, "checks", None) or []) if getattr(c, "status", "ok") != "ok"
+    ]
+    for item in fact_problems:
+        findings.append(
+            f"自检未通过[{getattr(item, 'code', '')}]：{_text(getattr(item, 'detail', ''))}"
+        )
+
     level = getattr(gate, "level", "") or ""
     if level == "blocked":
         blockers.append(
@@ -96,6 +113,13 @@ def _completeness_dim(contract: Any, blockers: list[Blocker]) -> DimensionVerdic
             notice="主体或正文缺失，必须补全后重新解析",
             findings=findings,
         )
+    fact_notice = ""
+    if fact_problems:
+        codes = "、".join(
+            dict.fromkeys(_text(getattr(c, "code", "")) for c in fact_problems)
+        )
+        fact_notice = f"有 {len(fact_problems)} 项事实自检未通过（{codes}），需人工核对"
+
     if level == "degraded":
         return DimensionVerdict(
             key=_DIM_COMPLETENESS,
@@ -103,14 +127,25 @@ def _completeness_dim(contract: Any, blockers: list[Blocker]) -> DimensionVerdic
             level=GRADE_ATTENTION,
             score=60,
             summary=summary or "部分必备字段缺失，下游结论需携带该标注",
+            notice=fact_notice,
             findings=findings,
         )
+
+    # 门禁 ok 时，事实自检仍可把等级压下来：字段都抽到了，但彼此矛盾
+    if any(_text(getattr(c, "status", "")) == "warning" for c in fact_problems):
+        level_out, score = GRADE_ATTENTION, 60
+    elif fact_problems:
+        level_out, score = GRADE_MOSTLY, 80
+    else:
+        level_out, score = GRADE_TRUSTED, 100
+
     return DimensionVerdict(
         key=_DIM_COMPLETENESS,
         label=_DIM_LABELS[_DIM_COMPLETENESS],
-        level=GRADE_TRUSTED,
-        score=100,
+        level=level_out,
+        score=score,
         summary=summary or "必备字段齐备",
+        notice=fact_notice,
         findings=findings,
     )
 
@@ -250,11 +285,20 @@ def _performance_dim(simulation: Any) -> DimensionVerdict:
     computable = [s for s in scenarios if getattr(s, "computable", False)]
 
     findings = []
+    failed_checks: list[str] = []
     for scenario in scenarios:
         label = getattr(scenario, "label", "") or getattr(scenario, "scenario", "")
         summary_text = _text(getattr(scenario, "summary", ""))
         if summary_text:
             findings.append(f"{label}：{summary_text}")
+        # 确定性一致性校验没通过：数值算出来了，但输入事实互相矛盾。
+        # 这正是'程序跑得通 ≠ 算得对'——必须让它在结论里可见，而不是埋在 calc_steps 里。
+        for check in getattr(scenario, "checks", []) or []:
+            if _text(check.get("status")) == "ok":
+                continue
+            code = _text(check.get("code")) or "check_failed"
+            failed_checks.append(code)
+            findings.append(f"　一致性校验未通过[{code}]：{_text(check.get('detail'))}")
 
     if not scenarios or not computable:
         dim.level = GRADE_UNDETERMINED
@@ -268,6 +312,14 @@ def _performance_dim(simulation: Any) -> DimensionVerdict:
     dim.summary = f"{len(computable)}/{len(scenarios)} 个情景完成数值量化"
     if len(computable) != len(scenarios):
         dim.notice = notice or "部分情景无法量化"
+    if failed_checks:
+        # 数值链路跑通不等于事实自洽：出现矛盾就不能给最高等级
+        if GRADE_RANK.get(dim.level, 0) > GRADE_RANK[GRADE_ATTENTION]:
+            dim.level = GRADE_ATTENTION
+            dim.score = min(dim.score, 60)
+        dim.notice = (
+            f"{dim.notice}；" if dim.notice else ""
+        ) + f"有 {len(failed_checks)} 项一致性校验未通过（{'、'.join(dict.fromkeys(failed_checks))}），需人工核对"
     dim.findings = findings
     return dim
 

@@ -44,6 +44,58 @@ GATE_DEGRADED = "degraded"
 GATE_BLOCKED = "blocked"
 
 
+# ============================================================
+#  双源仲裁（L1 规则 vs L2 大模型）
+#
+#  背景：`choose_better` 原来按 `completeness()` 的 (主体数, 必备项命中, 字段命中)
+#  三元组**整份二选一**。当两个抽取器各命中 7/8 个字段、但命中的是不同的 7 个时，
+#  三元组相等 → 保留 L1 → **L2 已经抽对的那个字段被白白丢掉**。
+#
+#  这与「可信性」直接冲突：`confidence` 原本是写死的先验（规则 0.65~0.8、
+#  大模型一律 0.9），不携带任何信息。两个**失败模式独立**的抽取器对同一字段
+#  给出相同值，才是一个真正有信息量的可信信号；给出不同值，则是最该送人工核对的情形。
+#
+#  因此改成字段级仲裁：逐项定状态、逐项定置信度、冲突项显式留痕。
+# ============================================================
+
+ARB_AGREED = "agreed"  # 两个抽取器都给了值且完全一致
+ARB_L1_ONLY = "l1_only"  # 只有规则抽取给了值
+ARB_L2_ONLY = "l2_only"  # 只有大模型给了值（合并时补入）
+ARB_CONFLICT = "conflict"  # 两个都给了值但不一致 —— 必须人工核对
+ARB_MISSING = "missing"  # 两边都没抽到
+ARB_SINGLE = "single"  # 只跑了一个抽取器，无从交叉验证
+
+ARB_LABELS = {
+    ARB_AGREED: "双源一致",
+    ARB_L1_ONLY: "仅规则",
+    ARB_L2_ONLY: "仅大模型",
+    ARB_CONFLICT: "双源冲突",
+    ARB_MISSING: "未抽到",
+    ARB_SINGLE: "单源",
+}
+
+
+class FieldArbitration(BaseModel):
+    """一个字段（或主体属性）在 L1 / L2 之间的仲裁记录。
+
+    这是字段级仲裁的**权威记录**，覆盖 8 个展示字段、合同名称与主体属性；
+    `ContractField.agreement` 只是给前端/报告用的同源镜像（由同一处代码写入）。
+    """
+
+    key: str
+    label: str = ""
+    status: str = ARB_MISSING
+    l1_value: str = ""
+    l2_value: str = ""
+    chosen_value: str = ""
+    chosen_from: str = Field(default="", description="both | l1 | l2 | 空")
+    confidence: float = 0.0
+
+    @property
+    def is_conflict(self) -> bool:
+        return self.status == ARB_CONFLICT
+
+
 class GateFailure(BaseModel):
     """一条门禁未通过项。"""
 
@@ -64,12 +116,16 @@ class ParseGate(BaseModel):
     failures: list[GateFailure] = Field(default_factory=list)
     summary: str = Field(default="", description="一句话结论，可直接展示")
 
+    # ---- 字段级双源分歧：值抽到了，但两个抽取器不一致，属于"必须人工核对" ----
+    disagreements: list[FieldArbitration] = Field(default_factory=list)
+
     # ---- L1 → L2 升级痕迹：必须留档，否则"为什么这份用 LLM 抽的"无从追溯 ----
     escalated: bool = False
     escalation_reason: str = ""
     escalation_outcome: str = Field(
         default="",
-        description="adopted 采纳 L2 | rejected L2 更差已丢弃 | unavailable L2 不可用 | skipped 已跳过",
+        description="adopted 用 L2 补充了字段 | merged 按字段合并并取得交叉验证 | "
+        "rejected L2 没提供可用信息已丢弃 | unavailable L2 不可用 | skipped 已跳过",
     )
     escalation_note: str = ""
 
@@ -80,15 +136,30 @@ class ParseGate(BaseModel):
     def missing_labels(self) -> list[str]:
         return [f.label for f in self.failures]
 
+    def conflict_labels(self) -> list[str]:
+        return [d.label for d in self.disagreements]
+
 
 class ContractField(BaseModel):
-    """单个抽取字段及其依据。"""
+    """单个抽取字段及其依据。
+
+    `confidence` 的含义随来源而变，前端不要一概当成"模型置信度"：
+      - `agreement == ARB_SINGLE`（只跑了一个抽取器）时，它是该抽取器的**静态先验**
+        （规则按正则的保守程度写死 0.65~0.8，大模型一律 0.9），**不携带证据**；
+      - 跑过双源仲裁时，它由**两个抽取器是否一致**导出（一致 0.95 / 冲突 0.45），
+        这才是一个有信息量的信号。
+    """
 
     key: str
     label: str
     value: str = ""
     confidence: float = 0.0
     evidence: str = Field(default="", description="支撑该字段的合同原文片段")
+    agreement: str = Field(default="", description="双源一致性，取值见 schema.ARB_* 常量")
+    alternative: str = Field(
+        default="", description="另一抽取器给出的**不同**值（冲突时填写，供人工比对）"
+    )
+    source: str = Field(default="", description="取值来源：both | rule | llm | 空")
 
 
 # ============================================================
@@ -160,6 +231,32 @@ class Ratio(BaseModel):
     raw: str = ""
 
 
+# ============================================================
+#  事实之间的确定性自检（见 consistency.py）
+#
+#  单项"抽到了"不等于整体自洽：签订日期不该晚于生效日期、定金不该超过 20%。
+#  这类矛盾只能靠交叉比对发现，且必须带机器可读的原因码，
+#  否则"校验没通过"就只能躺在中文里，程序与测试都读不出来。
+# ============================================================
+
+CHECK_OK = "ok"
+CHECK_WARNING = "warning"
+CHECK_REVIEW = "review"
+
+
+class ConsistencyCheck(BaseModel):
+    """一条确定性一致性校验的结论。"""
+
+    code: str = Field(description="机器可读的原因码，如 delivery_before_sign_date")
+    status: str = Field(
+        default=CHECK_OK,
+        description="ok 通过 | warning 发现矛盾 | review 需人工复核（如是否过分高于损失）",
+    )
+    detail: str = ""
+    evidence: str = Field(default="", description="支撑该结论的合同原文片段")
+    legal_basis: str = Field(default="", description="如涉及法定上限，注明法条原文")
+
+
 class ContractFacts(BaseModel):
     """面向推理的结构化事实。
 
@@ -211,8 +308,14 @@ class StructuredContract(BaseModel):
 
     clauses: list[Clause] = Field(default_factory=list)
     fields: list[ContractField] = Field(default_factory=list)
+    # 字段级双源仲裁记录（权威来源）；只有跑过 L1→L2 升级才有内容。
+    # 为空表示"只跑了一个抽取器，无从交叉验证"，此时各字段 agreement 为 single。
+    arbitration: list[FieldArbitration] = Field(default_factory=list)
     # fields 供人看（原文片段），facts 供机器算（数值 / ISO 日期 / 带比较符的指标）
     facts: ContractFacts = Field(default_factory=ContractFacts)
+    # facts 之间的确定性自检结论（日期先后 / 定金上限 / 违约金复核）。
+    # 不适用的规则不产生条目——"没检查"与"检查通过"必须能区分。
+    checks: list[ConsistencyCheck] = Field(default_factory=list)
 
     # ---- 元信息，用于说明"这份结果是怎么来的" ----
     source_file: str = ""

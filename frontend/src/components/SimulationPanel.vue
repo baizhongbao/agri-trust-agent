@@ -227,6 +227,19 @@ function currentTierLabel(scenario) {
         </ul>
       </div>
 
+      <!-- 确定性一致性校验：数值算出来了，但输入事实互相矛盾 -->
+      <ul v-if="scenario.checks?.length" class="checks">
+        <li
+          v-for="(check, index) in scenario.checks"
+          :key="'chk' + index"
+          class="check"
+          :class="check.status === 'ok' ? 'check-ok' : 'check-warn'"
+        >
+          <span class="check-code mono">{{ check.code }}</span>
+          <span>{{ check.detail }}</span>
+        </li>
+      </ul>
+
       <div v-if="scenario.calc_steps?.length" class="steps">
         <button class="link steps-toggle" @click="toggleSteps(scenario.scenario)">
           {{ showSteps.hit[scenario.scenario] ? '收起计算过程' : '查看计算过程' }}
@@ -651,6 +664,41 @@ function currentTierLabel(scenario) {
   color: var(--slate-500);
   line-height: 1.7;
   padding: 0 4px 8px;
+}
+
+.checks {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.check {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border-left: 3px solid var(--slate-300);
+  background: var(--slate-50, #f8fafc);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.check-code {
+  font-size: 11.5px;
+  color: var(--slate-500);
+}
+
+.check-ok {
+  border-left-color: var(--green-600);
+}
+
+.check-warn {
+  border-left-color: var(--red-600, #dc2626);
+  background: #fef2f2;
+  color: var(--red-600, #dc2626);
 }
 
 .notice {

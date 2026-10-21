@@ -123,11 +123,29 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
    - **L2** = LLM 重解析（`LLMStructurer`），仅在
      `needs_escalation()` 命中时触发：主体全缺 / 文档来自 OCR（图片·扫描件）/ 关键交易要素大面积缺失。
      开关 `CONTRACT_ESCALATION=auto|off`。
-   - **择优**：`choose_better()` 按 `(主体数, 必备项命中, 字段命中)` 比较，
-     **只在 L2 更完整时才采纳**——`LLM_PROVIDER=mock` 时 L2 返回空壳，
-     直接采纳会把可用的 L1 结果清空。
+   - **字段级仲裁**：`choose_better()` 逐项比较 L1 / L2，**不再整份二选一**。
+     旧实现按 `(主体数, 必备项命中, 字段命中)` 整份择优，两侧各命中**不同**的 7 项时
+     三元组相等 → 判平手 → 丢掉一侧，连带把那一侧唯一抽对的字段一起丢（纯损失）。
+     现在逐项定状态（`agreed` / `l1_only` / `l2_only` / `conflict` / `missing`）后合并：
+     冲突时保留确定性规则的值、把另一侧的值存进 `ContractField.alternative`，
+     并把该冲突升级为门禁 `degraded`（**系统不判断哪一侧正确**）。
+     **L2 什么都没提供时原样返回 L1**——`LLM_PROVIDER=mock` 的空壳走这条路，绝不覆盖。
+   - **主体合并的特殊处理**：两侧角色命名方案完全不重叠时（L1「供方/需方」与 L2「甲方/乙方」
+     描述同一对当事人），**不取并集**，否则会凭空造出 4 个主体；此时整侧取主体多的一方，
+     并记一条 `parties.roles` 冲突。
+   - **`ContractField.confidence` 有两种含义，展示时必须说清**：
+     单源（`agreement=single`）时它是该抽取器的**静态先验**（规则 0.65~0.8、大模型一律 0.9），
+     **不携带证据**；跑过双源仲裁后它才由**是否一致**导出（一致 0.95 / 冲突 0.45）。
    - **L4** = `evaluate()`：`text`/`parties` 缺失为 blocking（level=blocked，下游不可信），
      金额/日期/期限/标题缺失为 degraded（可继续但必须带标注）。
+     另有第二类失败：必备项**双源冲突**（值抽到了但两个抽取器不一致）→ 同样降级，
+     但记在 `gate.disagreements` 而非 `gate.failures`——"冲突"和"缺失"处置完全不同。
+     非必备字段（合同编号 / 质量标准 / 付款方式 / 违约责任）的冲突只留痕、不降级，
+     否则任何一处措辞差异都会把整份合同判成"不完整"。
+   - **事实自检**（`consistency.py`）：`facts` 逐项抽到了不等于彼此自洽。
+     日期先后、定金 20% 法定上限（民法典 586 条）等由纯 Python 判定，
+     产出**机器可读的原因码**（如 `delivery_before_sign_date`），
+     不适用的规则**不产生条目**——"没检查"与"检查通过"必须能区分。
 
    现有限制（待办）：L2 目前只把 OCR **文本**再送一次 LLM，没有直接读图片；
    真•多模态直读需要在 `LLMProvider` 上加视觉通道，不在此次改动范围内。
@@ -173,8 +191,9 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 │           ├── contract_parser/   ✅ P0
 │           │   ├── pdf_reader.py    PDF 文本层直抽 / 扫描件与图片（PNG/JPG）走 OCR，统一 read_document 入口
 │           │   ├── structurer.py    规则 / 大模型双实现（L1=rule，L2=llm）
-│           │   ├── gate.py          L1→L2 升级判定 + L4 硬失败门禁（必备字段）
+│           │   ├── gate.py          L1→L2 升级判定 + 字段级双源仲裁与合并 + L4 门禁
 │           │   ├── facts.py         可推理事实抽取（金额/日期/指标数值化）
+│           │   ├── consistency.py   事实自检（日期先后 / 定金 20% 上限 / 违约金复核），纯 Python，带原因码
 │           │   ├── schema.py        数据模型（fields + facts 双层，含 evidence）
 │           │   ├── storage.py       落盘与查询
 │           │   ├── service.py       编排
@@ -204,12 +223,13 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 │               ├── exporter.py      报告装配 + PDF（PyMuPDF）/ Word（python-docx）渲染
 │               └── router.py
 │   └── tests/                    单元测试
-│       ├── test_parse_gate.py    L1→L2 升级判定 + L4 门禁 + 场景回归
+│       ├── test_parse_gate.py    L1→L2 升级判定 + 字段级仲裁 + L4 门禁 + 场景回归
+│       ├── test_consistency.py   事实自检 + 计算一致性校验的结构化原因码
 │       ├── test_image_upload.py  图片上传（magic byte → OCR 分发）
 │       ├── test_mcp_compact.py   MCP 工具输出体积上限（截断后须仍是合法 JSON）
 │       ├── test_party_credit_code.py  最近邻信用代码归属
 │       ├── test_link_flow.py     条款切分 + 供方/需方角色识别
-│       └── test_verdict.py       汇总判定：一票否决 / 就低不就高 / 缺项不可评
+│       └── test_verdict.py       汇总判定：一票否决 / 就低不就高 / 缺项不可评 / 冲突与自检降级
 │
 ├── frontend/                     Vue3 + Vite
 │   ├── vite.config.js            代理 /api 与 /health 到 127.0.0.1:8000
@@ -346,6 +366,11 @@ Copy-Item .env.example .env
 
 若改动了规则抽取：以 `data/samples/订单农业合同_示例.pdf` 为基准，9 个字段（含合同名称）应全部正确抽取。
 
+排查提示：示例合同（电子版、字段齐备）**不满足 `needs_escalation()`**，
+因此不会跑 L1→L2，各字段 `agreement` 一律是 `single`、`gate.disagreements` 为空——
+这是预期行为。若它突然变成 `degraded`，先读 `gate.summary` 分清是
+「缺失」（`gate.failures`）还是「双源冲突」（`gate.disagreements`），再决定往哪查。
+
 ---
 
 ## 9. 红线
@@ -391,13 +416,23 @@ Copy-Item .env.example .env
 - [x] **汇总判定层（阶段①）**：`verdict` 模块把四模块结论归并为总体等级（可信/基本可信/需关注/高风险/不可评）+ 否决项 + 四维分项；REST `POST /api/v1/verdict/evaluate`、MCP `overall_verdict`、前端「汇总结论」页签；判定为纯函数，单模块失败标「不可评」不静默
 - [x] **报告导出**：`verdict/exporter.py` 把汇总结论 + 各模块明细装配成 `ReportModel`，渲染 PDF（PyMuPDF 内置中文字体 china-s）/ Word（python-docx）；REST `GET /api/v1/verdict/{doc_id}/report?format=pdf|docx`、MCP `export_report`、前端「导出 PDF / 导出 Word」；跨平台中文字体一致，无需系统字体
 - [x] **接入 deepseek-flash（OpenAI 兼容）**：新增 `DeepSeekLLMProvider`（`LLM_PROVIDER=deepseek`），替换盘古作为当前真实 LLM；示例合同 LLM 抽取实测 **8/8** 字段命中，`complete_json` / `complete` 均通。盘古 Provider 保留（华为技术，待凭证）
+- [x] **可信性加固（2026-10-15，借鉴 MoCA-Agent 的"原子声明 + 确定性校验"思路，不含其市场机制）**：
+  ① `choose_better` 由整份择优改为**字段级仲裁与合并**（原来两侧各命中不同 7 项时会丢掉一侧）；
+  ② `ContractField.confidence` 由**双源是否一致**导出，冲突字段带 `alternative` 并升级为门禁 `degraded`；
+  ③ `calculator` 里算完即丢的 `consistent` 布尔值提升为**结构化原因码**（`amount_unit_price_quantity_mismatch`）并接入 verdict；
+  ④ 新增 `consistency.py`：日期先后、定金 20%（民法典 586 条）、违约金比例复核等**纯 Python 自检**。
+  前端（字段一致性标签 / 冲突对照 / 事实自检卡片）、报告（新增「一致性自检」节）、MCP（`checks` 提权）同步。
+  注：**未采纳**论文的市场清算与加权总分（与 `verdict/schema.py` 的「不做过早加权总分」相悖，
+  且市场置信度未经校准、成本约 5×）。
 - [x] 测试：单元测试 + 冒烟测试 + 接口测试，全部通过
 
 ### 下一步（建议顺序）
 
 1. **接盘古 + 实测盘古链路** —— deepseek-flash 已实测；拿到盘古 MaaS 凭证后再验证 `LLM_PROVIDER=pangu`
 2. **AgentArts 接入** —— 参赛资格线。MCP server 已就绪，剩下的是把它部署到后端公网可达处，再在 AgentArts 注册为 MCP Target（公网部署前需加认证与限流）
-3. **标的品类识别** —— 解决「水分 14.5% 对籼米一致、对籼稻谷偏离」的矛盾结论（`facts.subject_category` + 合规比对适用性过滤）
+3. **补一条真实扫描件的双源仲裁回归** —— 目前示例合同不触发 L1→L2，
+   字段级仲裁只有单元测试覆盖；拿扫描件（会触发升级）跑一次真实链路，
+   确认 `l2_only` 补入与 `conflict` 留痕在真实 OCR 噪声下也符合预期
 4. **演示准备** —— 演示脚本、断网演练、录屏
 
 ### 待人类完成（AI 无法代做）
@@ -435,3 +470,27 @@ LLM 只负责语义理解（条款分类、定性风险分析）。
 **为什么判不了就返回 review**
 `review`（需人工核对）优于错误的确定结论。企业核验里登记状态不在已知集合、
 日期无法解析、角色识别失败，都显式给 review 而不是硬拍一个 pass/fail。
+
+**为什么"冲突"要跟"缺失"分开存**
+两者都让门禁 `degraded`，但处置完全相反：
+`failures`（缺失）是说"没抽到"，要做的是**补抽**；
+`disagreements`（冲突）是说"两个抽取器都抽到了但不一样"，要做的是**人工核对原文**。
+合在一个字段里，前端就只能显示一句含糊的"解析不完整"，复核的人不知道要不要翻原件。
+相应地，`ParseGate` 的这两个列表由 `evaluate()` 分别填充，从不互相冒充。
+
+**为什么 `confidence` 会有两种含义**
+单源时它只是抽取器自己写死的先验（规则按正则的保守程度 0.65~0.8、大模型一律 0.9），
+**不含任何证据**——把 0.9 展示成"模型很确信"是在骗使用者。
+只有跑过 L1/L2 双源仲裁后，它才由"两个**失败模式独立**的抽取器是否给出同一个值"导出
+（一致 0.95 / 冲突 0.45）。所以前端用 `agreement` 决定标签、用 tooltip 说明含义，
+不要只显示一个裸百分比。
+
+**为什么不去做「多智能体投票 / 加权总分」**
+曾评估过按 MoCA-Agent 那样让多个角色对每条抽取结果投票、再按权重清算出置信度，**结论是不做**：
+① 同一 backbone、同一份 OCR 文本、同一套 prompt，产出的多是**相关性误差**而非独立误差，
+投票会把"一起错"包装成"高置信度"；
+② 论文自己声明市场置信度**未经校准**，不能当作真实可信度；
+③ 全流程 6~10 次 LLM 调用（约 5× 成本），与 `mock` 离线演示、断网兜底相冲突；
+④ 加权总分与本项目 `verdict/schema.py` 写明的「**不做过早加权总分**」直接矛盾。
+真正被采纳的是它的**结构**部分：原子级比对、逐项状态、确定性校验、原因码——
+这些不花额外 LLM 调用，且与本项目既有原则同源。

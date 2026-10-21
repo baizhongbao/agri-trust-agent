@@ -30,10 +30,26 @@ def _step(formula: str, result: float | None) -> dict[str, Any]:
     return {"formula": formula, "result": result}
 
 
+def _check(code: str, status: str, detail: str, **extra: Any) -> dict[str, Any]:
+    """一条结构化的确定性校验结论。
+
+    `code` 是**机器可读的原因码**（ok / warning 共用一个 code 时以 status 区分），
+    存在的意义是让"校验没通过"这件事可以被程序、测试和前端消费，
+    而不是像原来那样被拼进一句中文里、谁也读不出来。
+
+    status：ok（通过）| warning（发现矛盾，数值仍按更可信的一侧计算）| review（无法判定）
+    """
+    out: dict[str, Any] = {"code": code, "status": status, "detail": detail}
+    out.update(extra)
+    return out
+
+
 # 价格波动情景的敏感性区间档位（改进 4）
 _PRICE_TIERS_PCT = (20.0, 0.0, -20.0)
 # 自然灾害情景的敏感性区间档位
 _DISASTER_TIERS_PCT = (10.0, 30.0, 50.0)
+# 「数量×单价」与「合同总额」的允许偏差（%）。超过即判定抽取存在矛盾。
+_AMOUNT_TOLERANCE_PCT = 2.0
 
 
 def simulate_price_fluctuation(
@@ -67,21 +83,52 @@ def simulate_price_fluctuation(
             "computable": False,
             "reason": "合同未载明金额（facts.amount 为空），且无单价×数量可推算，无法进行价格损益计算",
             "calc_steps": [],
+            "checks": [],
         }
 
     change = float(price_change_pct) / 100.0
 
     steps: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = []
     if derived:
         steps.append(_step(f"合同无总额，按单价×数量推算 = {unit_price:,.2f} × {quantity:,.2f}", amount))
     elif unit_price is not None and quantity is not None:
+        # 数量×单价 与 合同总额 必须对得上——对不上说明某一侧抽错了。
+        # 原来这里只把结论拼进 steps 的中文里，布尔值 `consistent` 算完就丢，
+        # 既不进 verdict、也不触发复核。现在把它作为原因码显式带出去。
         check = round(unit_price * quantity, 2)
-        consistent = abs(check - amount) / amount < 0.02 if amount else False
+        deviation_pct = abs(check - amount) / amount * 100 if amount else None
+        consistent = deviation_pct is not None and deviation_pct < _AMOUNT_TOLERANCE_PCT
         steps.append(
             _step(
                 f"一致性校验：数量×单价 = {unit_price:,.2f} × {quantity:,.2f} = {check:,.2f}"
                 f"（合同总额 {amount:,.2f}，{'一致' if consistent else '存在偏差，以合同总额为准'}）",
                 check,
+            )
+        )
+        if consistent:
+            detail = (
+                f"数量×单价 = {check:,.2f} 元，与合同总额 {amount:,.2f} 元一致"
+                f"（偏差 {deviation_pct:.2f}%，容差 {_AMOUNT_TOLERANCE_PCT:g}%）"
+            )
+        else:
+            detail = (
+                f"数量×单价 = {check:,.2f} 元，与合同总额 {amount:,.2f} 元不一致"
+                + (
+                    f"，偏差 {deviation_pct:.2f}%，超过 {_AMOUNT_TOLERANCE_PCT:g}% 容差"
+                    if deviation_pct is not None
+                    else "，且合同总额为 0，无法计算偏差"
+                )
+                + "。数值已按合同总额计算，但单价 / 数量 / 总额三者至少有一项抽取有误，需人工核对"
+            )
+        checks.append(
+            _check(
+                "amount_consistency" if consistent else "amount_unit_price_quantity_mismatch",
+                "ok" if consistent else "warning",
+                detail,
+                expected=check,
+                actual=amount,
+                deviation_pct=round(deviation_pct, 4) if deviation_pct is not None else None,
             )
         )
 
@@ -123,6 +170,7 @@ def simulate_price_fluctuation(
         "breach_incentive_value": round(incentive, 2),
         "tiers": [_price_tier(amount, pct) for pct in _PRICE_TIERS_PCT],
         "calc_steps": steps,
+        "checks": checks,
         "summary": (
             f"市场价较合同价{'上涨' if change > 0 else '下跌'} {abs(price_change_pct)}%，"
             f"同等数量下市场交易额为 {_fmt(market_value)} 元，与合同金额偏离 {_fmt(deviation)} 元；"

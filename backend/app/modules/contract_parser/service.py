@@ -13,7 +13,7 @@ import logging
 
 from app.core.config import settings
 from app.core.providers.base import ProviderNotReadyError
-from app.modules.contract_parser import gate, storage
+from app.modules.contract_parser import consistency, gate, storage
 from app.modules.contract_parser.pdf_reader import PdfReadError, read_document, sniff_kind
 from app.modules.contract_parser.schema import StructuredContract
 from app.modules.contract_parser.structurer import (
@@ -118,6 +118,16 @@ def parse_contract(file_bytes: bytes, filename: str) -> tuple[str, StructuredCon
         escalated = True
         escalation_outcome = gate.ESCALATION_SKIPPED
         escalation_note = "CONTRACT_ESCALATION=off，已关闭自动升级"
+
+    # ---- 事实自检：单项抽到 ≠ 整体自洽 ----
+    # 放在门禁之前：门禁报告"缺什么"，自检报告"抽到的东西彼此矛盾"，
+    # 两者都会进入 warnings，使用者一眼能看全。
+    contract.checks = consistency.check_facts(contract.facts)
+    for problem in consistency.problems(contract.checks):
+        contract.warnings.append(
+            f"[自检/{problem.status}] {problem.code}：{problem.detail}"
+            + (f"　依据：{problem.legal_basis}" if problem.legal_basis else "")
+        )
 
     # ---- L4：硬失败门禁。必备字段仍缺失时必须显式暴露，不得静默通过 ----
     contract.gate = gate.evaluate(

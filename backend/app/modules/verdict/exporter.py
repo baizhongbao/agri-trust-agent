@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.modules.contract_parser.schema import ARB_AGREED, ARB_CONFLICT
 from app.modules.verdict import service
 from app.modules.verdict.schema import OverallVerdict
 
@@ -77,9 +78,59 @@ def _contract_section(contract: Any) -> ReportSection:
         suffix = f"（统一社会信用代码 {code}）" if code else ""
         lines.append(f"{getattr(party, 'role', '')}：{getattr(party, 'name', '')}{suffix}")
     for field in getattr(contract, "fields", []) or []:
-        if getattr(field, "value", ""):
+        if not getattr(field, "value", ""):
+            continue
+        agreement = getattr(field, "agreement", "")
+        if agreement == ARB_CONFLICT:
+            # 两个抽取器不一致：两个值都要写进报告，让复核的人自己判断
+            lines.append(
+                f"{field.label}：{field.value}"
+                f"　⚠ 双源冲突：规则取「{field.value}」，大模型取「{getattr(field, 'alternative', '')}」，"
+                "系统不做取舍，需人工核对原文"
+            )
+        elif agreement == ARB_AGREED:
+            lines.append(f"{field.label}：{field.value}　（规则与大模型双源一致）")
+        else:
             lines.append(f"{field.label}：{field.value}")
     return ReportSection(title="合同要点", lines=lines)
+
+
+def _consistency_section(contract: Any, simulation: Any) -> ReportSection | None:
+    """确定性自检明细。
+
+    这些结论全部由纯 Python 给出（无 LLM），是"程序跑得通 ≠ 算得对"的直接证据，
+    因此单独成节，而不是混在合同要点里被忽略。
+    """
+    lines: list[str] = []
+
+    fact_checks = list(getattr(contract, "checks", None) or [])
+    if fact_checks:
+        problems = [c for c in fact_checks if getattr(c, "status", "ok") != "ok"]
+        lines.append(
+            f"合同事实自检：共 {len(fact_checks)} 项，未通过 {len(problems)} 项"
+        )
+        for item in problems:
+            lines.append(
+                f"　[{getattr(item, 'status', '')}] {getattr(item, 'code', '')}："
+                f"{getattr(item, 'detail', '')}"
+            )
+            if getattr(item, "legal_basis", ""):
+                lines.append(f"　　法定依据：{item.legal_basis}")
+
+    for scenario in getattr(simulation, "scenarios", []) or []:
+        checks = [
+            c
+            for c in (getattr(scenario, "checks", None) or [])
+            if getattr(c, "status", "ok") != "ok"
+        ]
+        label = getattr(scenario, "label", "") or getattr(scenario, "scenario", "")
+        for item in checks:
+            lines.append(
+                f"　[{getattr(item, 'status', '')}] {label} "
+                f"{getattr(item, 'code', '')}：{getattr(item, 'detail', '')}"
+            )
+
+    return ReportSection(title="一致性自检（确定性，未调用大模型）", lines=lines) if lines else None
 
 
 def _standard_section(standard: dict | None) -> ReportSection | None:
@@ -171,6 +222,7 @@ def build_report(doc_id: str) -> ReportModel | None:
     if contract_section.lines:
         sections.append(contract_section)
     for section in (
+        _consistency_section(contract, simulation),
         _standard_section(standard),
         _parties_section(verify),
         _simulation_section(simulation),

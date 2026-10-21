@@ -9,9 +9,12 @@
 from __future__ import annotations
 
 from app.modules.contract_parser.schema import (
+    ARB_CONFLICT,
     GATE_BLOCKED,
     GATE_DEGRADED,
     GATE_OK,
+    ConsistencyCheck,
+    FieldArbitration,
     GateFailure,
     ParseGate,
     StructuredContract,
@@ -22,6 +25,7 @@ from app.modules.verdict import service
 from app.modules.verdict.schema import (
     GRADE_ATTENTION,
     GRADE_HIGH,
+    GRADE_MOSTLY,
     GRADE_TRUSTED,
     GRADE_UNDETERMINED,
 )
@@ -151,3 +155,105 @@ def test_single_module_error_is_surfaced(monkeypatch) -> None:
     assert any("执行异常" in n and "工商接口超时" in n for n in verdict.notices) or any(
         "执行异常" in n for n in verdict.notices
     )
+
+
+# ---------------- 双源冲突与事实自检进入汇总结论 ----------------
+
+
+def _dims(verdict) -> dict:
+    return {d.label: d for d in verdict.dimensions}
+
+
+def test_gate_disagreement_is_surfaced_as_finding() -> None:
+    """字段级双源冲突必须出现在结论里——值抽到了不等于值可信。"""
+    contract = _contract()
+    contract.gate = ParseGate(
+        level=GATE_DEGRADED,
+        summary="解析结果需人工核对：双源冲突 合同金额",
+        disagreements=[
+            FieldArbitration(
+                key="amount",
+                label="合同金额",
+                status=ARB_CONFLICT,
+                l1_value="486,000 元",
+                l2_value="384,000 元",
+                chosen_value="486,000 元",
+                chosen_from="l1",
+                confidence=0.45,
+            )
+        ],
+    )
+    verdict = _build(contract=contract)
+
+    completeness = _dims(verdict)["信息完备性"]
+    assert completeness.level == GRADE_ATTENTION
+    joined = " ".join(completeness.findings)
+    assert "双源冲突" in joined
+    assert "486,000 元" in joined and "384,000 元" in joined  # 两个值都要给出来
+    assert "需人工核对" in joined
+
+
+def test_fact_check_warning_caps_completeness_at_attention() -> None:
+    """字段都抽到了，但彼此矛盾 → 不能因为"门禁 ok"就判可信。"""
+    contract = _contract()
+    contract.checks = [
+        ConsistencyCheck(
+            code="delivery_before_sign_date",
+            status="warning",
+            detail="交货期限 2026-08-01 早于签订日期 2026-09-18",
+        )
+    ]
+    verdict = _build(contract=contract)
+
+    completeness = _dims(verdict)["信息完备性"]
+    assert completeness.level == GRADE_ATTENTION
+    assert any("delivery_before_sign_date" in f for f in completeness.findings)
+    assert "delivery_before_sign_date" in completeness.notice
+    assert verdict.grade == GRADE_ATTENTION
+
+
+def test_fact_check_review_caps_at_mostly() -> None:
+    """review（如需复核违约金是否过高）比 warning 轻：压到"基本可信"，不压到"需关注"。"""
+    contract = _contract()
+    contract.checks = [
+        ConsistencyCheck(
+            code="penalty_ratio_requires_review",
+            status="review",
+            detail="违约金 50% 高于参考线，是否酌减取决于实际损失",
+        )
+    ]
+    verdict = _build(contract=contract)
+
+    assert _dims(verdict)["信息完备性"].level == GRADE_MOSTLY
+    assert verdict.grade == GRADE_MOSTLY
+
+
+def test_simulation_failed_check_downgrades_performance() -> None:
+    """数值算出来了、程序跑通了，但输入事实互相矛盾 → 履约风险不能给最高等级。"""
+    simulation = _simulation()
+    simulation.scenarios[0].checks = [
+        {
+            "code": "amount_unit_price_quantity_mismatch",
+            "status": "warning",
+            "detail": "数量×单价 = 500.00 元，与合同总额 1,000.00 元不一致",
+        }
+    ]
+    verdict = _build(simulation=simulation)
+
+    performance = _dims(verdict)["履约风险"]
+    assert performance.level == GRADE_ATTENTION
+    assert any("amount_unit_price_quantity_mismatch" in f for f in performance.findings)
+    assert "一致性校验未通过" in performance.notice
+    assert verdict.grade == GRADE_ATTENTION
+
+
+def test_passing_calculator_check_does_not_downgrade() -> None:
+    """校验通过（status=ok）不该产生任何降级——否则等于没有信号。"""
+    simulation = _simulation()
+    simulation.scenarios[0].checks = [
+        {"code": "amount_consistency", "status": "ok", "detail": "数量×单价与合同总额一致"}
+    ]
+    verdict = _build(simulation=simulation)
+
+    assert _dims(verdict)["履约风险"].level == GRADE_TRUSTED
+    assert verdict.grade == GRADE_TRUSTED
