@@ -163,6 +163,9 @@ RTX 5060 Ti 算力是 **sm_120**，不是普通的"新显卡"：
 ```
 合同agent/
 ├── AGENTS.md                    本文件
+├── README.md                    对外说明（给使用者和访客看）
+├── LICENSE                      Apache-2.0
+├── .github/workflows/ci.yml     CI：离线 Provider 跑单测 + 冒烟；前端 npm ci + build
 ├── .env                         本机配置（不入库，含凭证）
 ├── .env.example                 模板 + Provider 开关说明
 ├── .gitattributes               行尾符统一为 LF（跨平台协作必需）
@@ -370,6 +373,12 @@ Copy-Item .env.example .env
 因此不会跑 L1→L2，各字段 `agreement` 一律是 `single`、`gate.disagreements` 为空——
 这是预期行为。若它突然变成 `degraded`，先读 `gate.summary` 分清是
 「缺失」（`gate.failures`）还是「双源冲突」（`gate.disagreements`），再决定往哪查。
+
+**CI（`.github/workflows/ci.yml`）跑的就是上面第 1、2 步**，但用全离线 Provider 组合
+（`mock` / `disabled` / `hashing` / `fixture` / `simple`）、不读 `.env`、不打外网。
+CI 用的环境变量是 workflow 里显式声明的，本地若想复现同一套，跑测试前先设置同样的变量
+（环境变量优先级高于 `.env`）。前端另有 `npm ci` + `npm run build` 一个 job。
+`main` 分支建议开启保护：要求 PR + 要求这两个 job 通过。
 
 ---
 

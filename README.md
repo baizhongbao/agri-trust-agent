@@ -1,6 +1,11 @@
 # 订单农业可信性 Agent
 
+[![CI](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 > 把一份订单农业合同 PDF，变成「可核验的结构化信息 + 对应标准依据 + 风险推演」。
+
+参加华为 ICT 创新大赛的项目。核心诉求是**可信**：所有抽取值都带原文 `evidence`，
 所有数值计算都由纯 Python 完成（不交给 LLM），无法判定时显式返回 `review` 而非硬拍结论。
 
 ---
@@ -98,6 +103,9 @@ uvicorn app.main:app --app-dir backend --reload
 | `VECTOR_STORE_BACKEND` | `simple` | `chroma` |
 | `SEARCH_PROVIDER` | `disabled` | `tavily` |
 
+**断网演示前**务必切回全离线组合：`EMBEDDING_PROVIDER=hashing`、
+`RERANK_PROVIDER=disabled`、`ENTERPRISE_API_PROVIDER=fixture`、`SEARCH_PROVIDER=disabled`。
+
 完整变量及说明见 `.env.example`。
 
 ---
@@ -134,7 +142,22 @@ uvicorn app.main:app --app-dir backend --reload
 
 ---
 
+## 测试
 
+```powershell
+# 1. 单元测试（不启服务）
+.venv\Scripts\python.exe -m pytest backend\tests -q
+
+# 2. 端到端冒烟（不启服务）
+.venv\Scripts\python.exe scripts\smoke_test.py
+
+# 3. 接口测试（需服务已启动）
+.venv\Scripts\python.exe scripts\api_test.py
+```
+
+通过标准：单元测试全过、字段命中率 8/8、冒烟测试 `gate` 为 `OK`、接口用例全过。
+
+---
 
 ## 目录结构
 
@@ -167,5 +190,32 @@ uvicorn app.main:app --app-dir backend --reload
 - **未就绪要显式报错**：用 `ProviderNotReadyError`，不静默返回空结果；缺必备字段时留下结构化痕迹 + `[门禁/*]` warning。
 - **解析分两级且不可回退**：L1 规则抽取为默认路径，仅在命中升级条件时触发 L2 LLM 重解析，且**只在更完整时才采纳**。
 - **判不了就返回 review**：显式给「需人工核对」，优于错误的确定结论。
+
+---
+
+## 持续集成
+
+`.github/workflows/ci.yml` 在每次 push 到 `main` 与 PR 时跑两个 job：
+
+- **Backend tests** —— 用**全离线 Provider 组合**（`mock` / `disabled` / `hashing` / `fixture`）跑
+  `pytest backend/tests` 与 `scripts/smoke_test.py`。CI 不打外网、不读 `.env`、不持有任何密钥。
+- **Frontend build** —— `npm ci` + `npm run build`。
+
+本地等价命令见本节上方「测试」。workflow 刻意不用 `pull_request_target`，
+避免陌生 PR 的代码在持有 secrets 的上下文里执行。
+
+---
+
+## 许可
+
+本项目以 [Apache License 2.0](./LICENSE) 授权。
+
+---
+
+## 贡献
+
+欢迎 Issue 与 Pull Request。提交 PR 前请先读 [`AGENTS.md`](./AGENTS.md)（架构铁律与红线），
+并确保 CI 两个 job 均为绿色。
+
 
 

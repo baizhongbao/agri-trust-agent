@@ -1,0 +1,74 @@
+name: CI
+
+# 只在 push 到 main 和 PR 时跑。
+# 刻意不使用 pull_request_target：那样会让陌生 PR 的代码在持有 secrets 的
+# 上下文里执行，是公开仓库最常见的密钥泄露途径。这里 fork PR 只有只读权限。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    # 全离线 Provider 组合 —— 与 AGENTS.md「断网演示」一致。
+    # CI 没有 .env，显式声明可保证无论仓库里放了什么都不会真的打外网。
+    env:
+      LLM_PROVIDER: mock
+      OCR_PROVIDER: disabled
+      EMBEDDING_PROVIDER: hashing
+      RERANK_PROVIDER: disabled
+      ENTERPRISE_API_PROVIDER: fixture
+      SEARCH_PROVIDER: disabled
+      VECTOR_STORE_BACKEND: simple
+      CONTRACT_STRUCTURER: rule
+      CONTRACT_ESCALATION: auto
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Unit tests
+        run: pytest backend/tests -q
+
+      - name: End-to-end smoke test
+        # 必须输出 gate=OK 且字段命中 8/8，否则视为回归
+        run: python scripts/smoke_test.py
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
