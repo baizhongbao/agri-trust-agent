@@ -3,79 +3,148 @@
 [![CI](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/baizhongbao/agri-trust-agent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-> 把一份订单农业合同 PDF，变成「可核验的结构化信息 + 对应标准依据 + 风险推演」。
+> 上传一份订单农业合同，得到「可核验的结构化信息 + 对应的标准依据 + 履约风险推演」。
 
-参加华为 ICT 创新大赛的项目。核心诉求是**可信**：所有抽取值都带原文 `evidence`，
-所有数值计算都由纯 Python 完成（不交给 LLM），无法判定时显式返回 `review` 而非硬拍结论。
-
----
-
-## 功能模块
-
-| 模块 | 优先级 | 状态 | 做什么 |
-|---|---|---|---|
-| 合同解析 | **P0** | ✅ | 上传 PDF / 图片 → `fields`（展示层）+ `facts`（推理层，金额/日期/指标数值化），全部带原文依据 |
-| 标准校验 | **P0** | ✅ | 四层：混合召回 → 精排 → 必备条款缺失检测（18 项）→ 数值合规比对（32 条限值） |
-| 企业核验 | P1 | ✅ | L1 信用代码校验位验算（GB 32100-2015）→ L2 工商查询 → L3 合同 vs 登记交叉校验 |
-| 履约模拟 | P1 | ✅ | 三情景推演（价格波动 / 自然灾害 / 一方违约）：数值由 Python 计算 + 真实判例引用 + LLM 定性分析 |
-| 汇总判定 | —— | ✅ | 四模块结论归并为总体可信度等级 + 否决项 + 四维分项，并导出 PDF / Word 报告 |
-| Agent 接入 | —— | 🚧 | MCP stdio server 已就绪，待部署到公网并在 AgentArts 注册为 MCP Target |
+一份合同进，一份**带证据的评估报告**出 —— 不是让模型替你做判断，而是把散落在大段
+条款里的事实摊开、数字化、对着法规和判例逐条比对，让签约双方都能看懂、都能复核。
 
 ---
 
-## 技术栈
+## 为什么做这件事
 
-| 层 | 选型 |
-|---|---|
-| 后端 | Python 3.11+ · FastAPI |
-| 前端 | Vue3 + Vite（零运行时 UI 框架） |
-| 大模型 | deepseek-flash（OpenAI 兼容，默认）· 华为云盘古 MaaS · mock 离线占位 |
-| OCR | 华为云文字识别（Linux 目标）· SiliconFlow PaddleOCR-VL（Windows）· 仅扫描件需要 |
-| 向量化 | `BAAI/bge-m3`：云端 SiliconFlow · 本地权重 · 哈希兜底（断网） |
-| 检索 | 向量 + BM25 混合召回 → `bge-reranker-v2-m3` 精排（可选，失败自动降级） |
-| 企业工商数据 | 企查查 MCP · 内置 fixture 演示库（离线兜底） |
-| Agent 接入 | MCP stdio server（FastMCP） |
-| 报告导出 | PDF：PyMuPDF（内置中文字体，跨平台一致）· Word：python-docx |
-| 存储 | SQLite + 本地文件 + 内存索引 |
+订单农业（"公司 + 农户"）是把小农户接进现代产业链的主要方式之一：农户按订单种植，
+企业按约定价格收购，农户有了销路，企业有了稳定货源。但它长期卡在一个环节上——**合同**。
 
-**所有外部依赖都走 Provider 层**（`backend/app/core/providers/`），靠 `.env` 开关在
-「真实服务」与「离线兜底」之间切换，业务代码零改动。
+- **信息严重不对称**。企业有法务、有模板、有经验；多数农户第一次读这么长的合同，
+  不清楚"水分 ≤ 14.5%"意味着什么，也不清楚"定金 20%"其实是法律上限。
+- **纠纷高发且代价不对称**。种植面积、收购量、质量标准、结算时点，任何一处含糊都会在
+  收获季变成争执。争议发生时，农户承担的往往是全年收入，企业承担的是一笔违约金。
+- **风险被低估而不是被计算**。价格大跌时企业会不会拒收？自然灾害算不算不可抗力？
+  违约金能不能覆盖损失？签约当天没人能回答。
+- **核验成本高**。相对方是否真实存在、是否经营范围相符、是否已有大量涉诉记录，
+  普通人靠肉眼和口碑去判断。
+
+本项目想做的，是把"专业机构才能给出的合同尽调"变成一次上传即可得到的能力。
+它不替农户或企业做决定，而是**把决策所需的证据摆到台面上**——
+这也是我们把项目命名为"可信性"而不是"评估打分"的原因。
 
 ---
 
-## 快速开始（Windows）
+## 它能做什么
+
+### 1. 合同解析：把条款变成可核验的事实
+
+上传 PDF 或图片（扫描件、手机拍照的合同都支持）。系统输出两层结果：
+
+- **展示层**：合同主体、标的、数量、单价、总金额、质量标准、交付期限、结算方式、
+  违约责任等字段，**每一项都附带支撑它的原文片段**，点开即可对照原件。
+- **推理层**：金额转数值、日期转标准格式、质量指标转"名称-比较符-阈值"三元组。
+  「486,000 元」变成可以比较大小的数字，后面的合规比对和损失推演全靠它。
+
+抽取由**规则引擎 + 大模型双通道**完成，逐项仲裁、不一致时保留确定性结果并显式标注冲突，
+交由人工核对——系统不假装自己能判断哪一侧是对的。
+
+### 2. 标准校验：对着法规和标准逐条比
+
+内置结构化依据库：**8 部依据 / 48 条条款 / 32 条可比较的限值**——
+以《订单农业合同规范指引》与《农产品订单合同示范条款》为骨架，
+叠加民法典合同编、粮食流通管理条例，以及农残限量、污染物限量、大米与优质稻谷
+质量分级等可量化标准，每条都带规则强度与生效时效。
+
+- **必备条款缺失检测**：18 项清单（11 项必备 + 7 项建议），缺哪一条、该补什么，逐条列出。
+- **数值合规比对**：把合同里的定金比例、违约金比例、水分/杂质/农药残留等指标，
+  与法定或标准限值对齐比较，直接指出"合同约定 25% vs 法定上限 20%"这类问题；
+  并做**标的品类适用性过滤**——用稻谷的合同不会去套小麦的限值。
+- 每条结论都能回溯到具体依据条文，可查、可复核。
+
+### 3. 企业核验：合同对手方是不是真的
+
+三级递进，任何一级失败都有可见痕迹：
+
+- **L1 本地验算**：统一社会信用代码校验位（GB 32100-2015）。不查库、不联网，
+  就能发现"代码是随手编的"这种最廉价也最常见的造假。
+- **L2 工商查询**：登记名称、法定代表人、成立日期、经营状态、经营范围。
+- **L3 交叉校验**：合同里写的和工商登记的，逐项对——主体名称不符、合同签署日期早于公司成立日期、
+  经营范围不含所交易品类，这类矛盾会在签字前被拦下。
+
+判不了就返回"需人工核对"，不硬拍一个结论。
+
+### 4. 履约模拟：把风险换算成钱
+
+围绕订单农业最常见的三类争议做情景推演：**价格剧烈波动、自然灾害、一方违约**。
+
+**所有数字由 Python 精确计算**（每一步计算过程可导出复核），大模型只负责定性分析——
+因为把 14.5 读成 15 就是事故。判责倾向引用从 **50 份农业承包、购销、土地经营权合同纠纷
+裁判文书**中提炼的裁判规则，并标注对应案号。
+
+### 5. 汇总判定与报告
+
+把上述四个模块的结论归并为总体可信度等级（可信 / 基本可信 / 需关注 / 高风险 / 不可评），
+单列**一票否决项**（如主体无法核验、关键条款双源冲突），并导出 PDF / Word 报告，
+可以直接打印给农户看。
+
+---
+
+## 为什么它可信
+
+一个"AI 帮你读合同"的产品，最大的风险是让人盲信它。这个项目的设计取向是**宁可承认没读到，
+也不给出一个看起来很确定的错误结论**：
+
+- **结论必须带证据**。没有原文依据的字段不允许出现在结果里。
+- **数字不经过大模型**。合规比对、损失计算全部是确定性代码，可复核、可复现。
+- **缺失、冲突、失败都必须显式留痕**。解析门禁、模块降级提示、"不可评"状态都是结构化输出，
+  不会用"全 0 风险"冒充"没问题"。
+- **自检不靠模型**。日期先后矛盾、定金超过法定上限、金额与单价数量对不上，由纯 Python 判定，
+  产出机器可读的原因码。
+- **判定就低不就高**。任一维度为高风险即总体高风险，缺失的维度不参与"取平均"。
+
+---
+
+## 适用边界
+
+诚实说明它现在做不到什么：
+
+- **不是法律意见**，不能替代律师审查与当事人协商；输出是风险提示与证据索引。
+- 依据库覆盖的是当前已结构化的法规与规范指引，**不等于全部现行有效规范**；
+  数值限值目前以粮食（稻谷 / 大米）品类为主，其他品类与地方性法规需要按需扩充。
+- 判例规则来自 50 份已提炼的裁判文书，是**倾向性参考**而非法律依据。
+- 对排版极不规范、手写或严重模糊的合同，抽取质量会下降；此时系统会降级并要求人工核对。
+- 履约模拟给出的是**风险量级与判责倾向**，不是判决预测。
+
+---
+
+## 未来方向
+
+- **接入华为云 AgentArts**：MCP Server 已就绪，把这套能力作为工具交由智能体自主调度，
+  让 Agent 在本地四模块之外继续联网取证（涉诉记录、政策变动、同类判例）。
+- **真·多模态直读**：当前对图片/扫描件是先 OCR 再解析，下一步让视觉模型直接读版面、
+  表格与签章，把"是否已盖章""手写补充条款"这类版面信息纳入核验。
+- **依据库持续扩展**：按品类（粮食、果蔬、畜禽、水产、中药材）和地区做适用性过滤，
+  纳入更多现行标准与地方条例。
+- **可复制到的场景**：农机作业服务合同、土地经营权流转合同、农业生产资料购销、
+  农业社会化服务——同一套"解析 → 依据比对 → 交叉核验 → 风险量化"骨架，换依据库即可迁移。
+- **面向县域服务端**：农业农村部门、合作社、涉农金融机构在贷前审查与纠纷调解中，
+  都可以用它做第一道筛查。
+
+对农户，它降低签约前的信息门槛；对企业，它减少合同瑕疵带来的履约争议；
+对监管与调解机构，它把"合同是否规范"从主观判断变成可查证的清单。
+这是我们认为这个项目值得继续做下去的理由。
+
+---
+
+## 快速开始
 
 ```powershell
-# 1. 创建虚拟环境并安装依赖
+# Windows
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-
-# 2. 复制配置模板
 Copy-Item .env.example .env
-
-# 3. 生成示例合同
 .venv\Scripts\python.exe scripts\make_sample_contract.py
-
-# 4. 一键起前后端（双窗口）
 start.bat
 ```
 
-- 前端 <http://127.0.0.1:5173>
-- 后端 <http://127.0.0.1:8000>
-- 接口文档 <http://127.0.0.1:8000/docs>
-
-手动启动：
-
-```powershell
-# 后端
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir backend
-# 前端（另一终端）
-cd frontend; npm install; npm run dev
-```
-
-## 快速开始（Linux）
-
 ```bash
+# Linux / macOS
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
 cp .env.example .env
@@ -83,139 +152,39 @@ python scripts/make_sample_contract.py
 uvicorn app.main:app --app-dir backend --reload
 ```
 
-> Linux 上要用本地模型（`EMBEDDING_PROVIDER=local`）时，需先单独装匹配 CUDA 的 torch，
-> 再装 `backend/requirements-ml.txt`。RTX 50 系（Blackwell / sm_120）必须 CUDA 12.8+ 构建。
+前端 <http://127.0.0.1:5173> · 后端 <http://127.0.0.1:8000> · 接口文档 <http://127.0.0.1:8000/docs>
+
+**开箱即用，无需任何密钥。** 默认配置全部走离线实现（哈希向量 + 规则抽取 + 内置演示企业库），
+clone 下来就能跑通完整链路并看到示例合同的评估报告。需要更强能力时，
+只改 `.env` 里的 Provider 开关即可切换到大模型、云端 OCR、真实工商数据与语义检索，
+业务代码零改动——开关清单见 `.env.example`。
 
 ---
 
-## 配置说明
+## 技术选型
 
-两台机器的差异**只体现在 `.env` 的 Provider 开关上**：
+| 层 | 选型 |
+|---|---|
+| 后端 | Python 3.11+ · FastAPI · SQLite + 本地文件 |
+| 前端 | Vue3 + Vite（零 UI 框架依赖） |
+| 大模型 | 华为云盘古 MaaS · deepseek · 离线 mock（OpenAI 兼容接口统一封装） |
+| OCR | 华为云文字识别 · 云端视觉模型 · 可关闭 |
+| 检索 | 向量 + BM25 混合召回 → 重排精排（`bge-m3` / `bge-reranker-v2-m3`，可降级） |
+| Agent | MCP stdio server，可注册为 AgentArts / 通用 MCP 客户端的工具 |
+| 报告 | PyMuPDF（PDF，内置中文字体）· python-docx（Word） |
 
-| 开关 | Windows（开发/演示） | Linux（主力机） |
-|---|---|---|
-| `LLM_PROVIDER` | `deepseek` | `deepseek` / `pangu` |
-| `OCR_PROVIDER` | `cloud` | `huawei` |
-| `EMBEDDING_PROVIDER` | `cloud` | `local` |
-| `RERANK_PROVIDER` | `cloud` | `cloud` / `disabled` |
-| `CONTRACT_STRUCTURER` | `rule` | `llm` |
-| `ENTERPRISE_API_PROVIDER` | `qcc` | `qcc` / `fixture` |
-| `VECTOR_STORE_BACKEND` | `simple` | `chroma` |
-| `SEARCH_PROVIDER` | `disabled` | `tavily` |
-
-**断网演示前**务必切回全离线组合：`EMBEDDING_PROVIDER=hashing`、
-`RERANK_PROVIDER=disabled`、`ENTERPRISE_API_PROVIDER=fixture`、`SEARCH_PROVIDER=disabled`。
-
-完整变量及说明见 `.env.example`。
+设计上最重要的约束：**所有外部依赖都走 Provider 抽象层**，
+"有凭证"与"无凭证"两条路共用同一套业务代码，任一供应商可单独替换。
 
 ---
 
-## 接口清单
+## 贡献与许可
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/health` | 健康检查，返回各 Provider 就绪状态 |
-| POST | `/api/v1/contracts/parse` | 上传 PDF / 图片并解析 |
-| GET | `/api/v1/contracts` | 已解析合同列表 |
-| GET | `/api/v1/contracts/{doc_id}` | 读取单份解析结果 |
-| GET | `/api/v1/standards` | 标准库目录 |
-| GET | `/api/v1/standards/stats` | 检索库状态 |
-| POST | `/api/v1/standards/search` | 按文本检索标准条款 |
-| POST | `/api/v1/standards/check` | 校验某份合同的条款覆盖 |
-| POST | `/api/v1/standards/reindex` | 重建检索库 |
-| POST | `/api/v1/enterprise/verify` | 核验某份合同全部主体（L1+L2+L3） |
-| POST | `/api/v1/enterprise/lookup` | 直接查询单个企业 |
-| POST | `/api/v1/simulate/{doc_id}` | 履约模拟（三情景） |
-| GET | `/api/v1/simulate/rules` | 裁判规则库状态 |
-| POST | `/api/v1/verdict/evaluate` | 汇总判定：总体可信度等级 |
-| GET | `/api/v1/verdict/{doc_id}/report?format=pdf\|docx` | 导出评估报告 |
-
-### MCP 工具（Agent 接入，非 HTTP）
-
-`backend/app/mcp/agri_server.py` 是 **stdio** server，由 MCP 客户端拉起，
-把四模块 + 汇总结论 + 报告导出 + 联网取证包成 8 个工具：
-
-`list_contracts` · `get_contract` · `check_standard` · `verify_enterprise` ·
-`simulate` · `overall_verdict` · `export_report` · `search_web`
-
-工具**不含上传入口**：Agent 先 `list_contracts` 拿 `doc_id`，再串后续工具。
-
----
-
-## 测试
-
-```powershell
-# 1. 单元测试（不启服务）
-.venv\Scripts\python.exe -m pytest backend\tests -q
-
-# 2. 端到端冒烟（不启服务）
-.venv\Scripts\python.exe scripts\smoke_test.py
-
-# 3. 接口测试（需服务已启动）
-.venv\Scripts\python.exe scripts\api_test.py
-```
-
-通过标准：单元测试全过、字段命中率 8/8、冒烟测试 `gate` 为 `OK`、接口用例全过。
-
----
-
-## 目录结构
-
-```
-├── backend/
-│   ├── app/
-│   │   ├── core/providers/      可插拔外部依赖（LLM / OCR / 向量 / 重排 / 搜索）
-│   │   ├── mcp/agri_server.py   MCP stdio server
-│   │   └── modules/
-│   │       ├── contract_parser/ 合同解析 P0
-│   │       ├── standard_check/  标准校验 P0
-│   │       ├── enterprise_verify/ 企业核验 P1
-│   │       ├── simulation/      履约模拟 P1
-│   │       └── verdict/         汇总判定 + 报告导出
-│   └── tests/                   单元测试
-├── frontend/                    Vue3 + Vite
-├── data/                        标准库 / 判例知识 / fixture / 示例合同 / 运行时产物
-├── scripts/                     示例合同生成、冒烟测试、接口测试、环境体检
-├── docs/                        环境报告 / 技术分析 / 交接文档
-└── start.bat                    Windows 一键起前后端
-```
-
----
-
-## 设计要点
-
-- **外部依赖一律走 Provider 层**：新增供应商 = 加一个实现类 + 在 `registry.py` 注册，业务模块不 import 任何厂商 SDK。
-- **抽取值必须带证据**：`ContractField.evidence` 存原文片段，结果可回溯、可复核。
-- **数值不交给 LLM**：`facts` 抽取、合规比对、损失计算全部是规则 / 纯 Python，LLM 只做语义理解（条款分类、定性风险）。
-- **未就绪要显式报错**：用 `ProviderNotReadyError`，不静默返回空结果；缺必备字段时留下结构化痕迹 + `[门禁/*]` warning。
-- **解析分两级且不可回退**：L1 规则抽取为默认路径，仅在命中升级条件时触发 L2 LLM 重解析，且**只在更完整时才采纳**。
-- **判不了就返回 review**：显式给「需人工核对」，优于错误的确定结论。
-
----
-
-## 持续集成
-
-`.github/workflows/ci.yml` 在每次 push 到 `main` 与 PR 时跑两个 job：
-
-- **Backend tests** —— 用**全离线 Provider 组合**（`mock` / `disabled` / `hashing` / `fixture`）跑
-  `pytest backend/tests` 与 `scripts/smoke_test.py`。CI 不打外网、不读 `.env`、不持有任何密钥。
-- **Frontend build** —— `npm ci` + `npm run build`。
-
-本地等价命令见本节上方「测试」。workflow 刻意不用 `pull_request_target`，
-避免陌生 PR 的代码在持有 secrets 的上下文里执行。
-
----
-
-## 许可
+欢迎 Issue 与 Pull Request。提 PR 前请先读 [`AGENTS.md`](./AGENTS.md)（架构铁律与红线），
+并确保 CI 两个 job 均为绿色。
 
 本项目以 [Apache License 2.0](./LICENSE) 授权。
 
----
-
-## 贡献
-
-欢迎 Issue 与 Pull Request。提交 PR 前请先读 [`AGENTS.md`](./AGENTS.md)（架构铁律与红线），
-并确保 CI 两个 job 均为绿色。
-
-
-
+> **想看实现细节？** 接口清单、数据模型、Provider 开关、模块职责、测试与排障，
+> 全部写在 [`AGENTS.md`](./AGENTS.md)；环境与技术分析见 [`docs/`](./docs/)。
+> 本文件只负责讲清楚"这是做什么的、为什么值得做"。
